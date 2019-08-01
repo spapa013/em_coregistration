@@ -38,25 +38,7 @@ example2 = {
             'linear': 1e-10,
             'other': 1e-10,
             }
-}
 
-mydata = {
-        'data': {
-            'landmark_file' : '/src/em2p_coreg/python/em2p_coreg/data/mydata.csv',
-            'header': ['label', 'flag', 'emx', 'emy', 'emz', 'optx', 'opty', 'optz'],
-            'actions': ['invert_opty', 'em_nm_to_neurog'],
-            'sd_set': {'src': 'opt', 'dst': 'em'}
-        },
-        #'output_json': '/allen/programs/celltypes/workgroups/em-connectomics/danielk/em_coregistration/tmp_out/transform.json',
-        'output_json': '/src/em2p_coreg/python/em2p_coreg/outputs/transform.json',
-        'model': 'TPS',
-        'npts': 10,
-        'regularization': {
-            'translation': 1e-10,
-            'linear': 1e-10,
-            'other': 1e-10,
-            }
-}
 
 def control_pts_from_bounds(data, npts):
     """create thin plate spline control points

@@ -16,13 +16,6 @@ example2 = {
         'sd_set': {'src': 'opt', 'dst': 'em'}
         }
 
-mydata = {
-        'landmark_file': './data/animal_id-17797_session-9_stack_idx-19_pixel-centroids_pre-resize.csv',
-        'header': ['optz', 'opty', 'optx'],
-        'sd_set': {'src': 'opt', 'dst': 'em'}
-        }
-
-
 class DataLoader(argschema.ArgSchemaParser):
     """class to load and manipulate different sources of data
     """
