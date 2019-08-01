@@ -7,12 +7,13 @@ import scipy
 
 example1 = {
         'data': {
-            'landmark_file' : './data/17797_2Pfix_EMmoving_20190414_PA_1018_Deliverable20180415.csv',
+            'landmark_file' : '/src/em2p_coreg/python/em2p_coreg/data/17797_2Pfix_EMmoving_20190414_PA_1018_Deliverable20180415.csv',
             'header': ['label', 'flag', 'emx', 'emy', 'emz', 'optx', 'opty', 'optz'],
             'actions': ['invert_opty'],
             'sd_set': {'src': 'em', 'dst': 'opt'}
         },
-        'output_json': '/allen/programs/celltypes/workgroups/em-connectomics/danielk/em_coregistration/tmp_out/transform.json',
+        #'output_json': '/allen/programs/celltypes/workgroups/em-connectomics/danielk/em_coregistration/tmp_out/transform.json',
+        'output_json': '/src/em2p_coreg/python/em2p_coreg/outputs/transform.json',
         'model': 'TPS',
         'npts': 10,
         'regularization': {
@@ -23,12 +24,13 @@ example1 = {
 }
 example2 = {
         'data': {
-            'landmark_file' : './data/17797_2Pfix_EMmoving_20190414_PA_1018_Deliverable20180415.csv',
+            'landmark_file' : '/src/em2p_coreg/python/em2p_coreg/data/17797_2Pfix_EMmoving_20190414_PA_1018_Deliverable20180415.csv',
             'header': ['label', 'flag', 'emx', 'emy', 'emz', 'optx', 'opty', 'optz'],
             'actions': ['invert_opty', 'em_nm_to_neurog'],
             'sd_set': {'src': 'opt', 'dst': 'em'}
         },
-        'output_json': '/allen/programs/celltypes/workgroups/em-connectomics/danielk/em_coregistration/tmp_out/transform.json',
+        #'output_json': '/allen/programs/celltypes/workgroups/em-connectomics/danielk/em_coregistration/tmp_out/transform.json',
+        'output_json': '/src/em2p_coreg/python/em2p_coreg/outputs/transform.json',
         'model': 'TPS',
         'npts': 10,
         'regularization': {
@@ -38,6 +40,23 @@ example2 = {
             }
 }
 
+mydata = {
+        'data': {
+            'landmark_file' : '/src/em2p_coreg/python/em2p_coreg/data/mydata.csv',
+            'header': ['label', 'flag', 'emx', 'emy', 'emz', 'optx', 'opty', 'optz'],
+            'actions': ['invert_opty', 'em_nm_to_neurog'],
+            'sd_set': {'src': 'opt', 'dst': 'em'}
+        },
+        #'output_json': '/allen/programs/celltypes/workgroups/em-connectomics/danielk/em_coregistration/tmp_out/transform.json',
+        'output_json': '/src/em2p_coreg/python/em2p_coreg/outputs/transform.json',
+        'model': 'TPS',
+        'npts': 10,
+        'regularization': {
+            'translation': 1e-10,
+            'linear': 1e-10,
+            'other': 1e-10,
+            }
+}
 
 def control_pts_from_bounds(data, npts):
     """create thin plate spline control points
@@ -230,4 +249,6 @@ if __name__ == '__main__':
     smod = Solve3D(input_data=example1)
     smod.run()
     smod = Solve3D(input_data=example2)
+    smod.run()
+    smod =  Solve3D(input_data=mydata)
     smod.run()
