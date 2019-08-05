@@ -38,7 +38,7 @@ example2 = {
             'linear': 1e-10,
             'other': 1e-10,
             }
-
+}
 
 def control_pts_from_bounds(data, npts):
     """create thin plate spline control points

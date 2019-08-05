@@ -1,6 +1,6 @@
-from alignment.transform import Transform
-from alignment.data_filter import DataFilter
-from alignment.data_handler import DataLoader
+from em2p_coreg.alignment.transform import Transform
+from em2p_coreg.alignment.data_filter import DataFilter
+from em2p_coreg.alignment.data_handler import DataLoader
 import json
 import numpy as np
 
