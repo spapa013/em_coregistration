@@ -1,0 +1,53 @@
+version: '2'
+services:
+  shared:
+    image: em2p_coreg
+    build:
+      context: .
+    env_file: .env
+    environment:
+      - DISPLAY=$DISPLAY
+      - XSOCK=/tmp/.X11-unix/X0
+    ports:
+      - "9999:8888"
+    volumes:
+      - /mnt:/mnt
+      - /tmp:/tmp
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ./notebooks:/notebooks
+      - .:/src/em2p_coreg
+      - $NOTEBOOKS:/notebooks/shared
+      - $FIGURES:/notebooks/figures
+    entrypoint:
+      - jupyter
+      - lab
+      - --ip=0.0.0.0
+      - --allow-root
+      - --NotebookApp.token='$JUPYTER_TOKEN'
+      - --no-browser
+    # network_mode: "host"
+
+  jupyter:
+    image: em2p_coreg
+    build:
+      context: .
+    env_file: .env
+    environment:
+      - DISPLAY=$DISPLAY
+      - XSOCK=/tmp/.X11-unix/X0
+    ports:
+      - "8888:8888"
+    volumes:
+      - /mnt:/mnt
+      - /tmp:/tmp
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ./notebooks:/notebooks
+      - .:/src/em2p_coreg
+    entrypoint:
+      - jupyter
+      - lab
+      - --ip=0.0.0.0
+      - --allow-root
+      - --NotebookApp.token='$JUPYTER_TOKEN'
+      - --no-browser
+    network_mode: "host"
