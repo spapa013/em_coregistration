@@ -12,7 +12,7 @@ anatomy = dj.create_virtual_module('pipeline_anatomy', 'pipeline_anatomy')
 radtune = dj.create_virtual_module('pipeline_radtune','pipeline_radtune')
 spattune = dj.create_virtual_module('pipeline_spattune','pipeline_spattune')
 
-def get_munit_ids(scan_relation, stack_key, brain_area, tuning=None, oracle_threshold=0.2, von_p_threshold=0.05, snr_threshold=1.3, n_scan_threshold=1, limit=10, as_list_dict=True):
+def get_munit_ids(scan_relation, stack_key, brain_area, tuning=None, oracle_threshold=0.2, von_p_threshold=0.05, snr_threshold=1.3, n_scan_threshold=1, as_list_dict=True):
     """
     Queries the database to find cells from the list of specified scans,
     uniquely registered into the specified structural stack and listed under the specified
