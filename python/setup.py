@@ -11,5 +11,5 @@ setup(
     author='Dan Kapner',
     author_email='danielk@alleninstitute.org',
     packages=find_packages(exclude=[]),
-    install_requires=['numpy', 'tqdm', 'scipy', 'pandas', 'datajoint', 'meshparty', 'pykdtree', 'ipyvolume', 'matplotlib', 'argschema']
+    install_requires=['numpy', 'tqdm', 'scipy', 'pandas', 'datajoint', 'meshparty', 'pykdtree', 'ipyvolume', 'matplotlib', 'argschema', 'torch']
 )
