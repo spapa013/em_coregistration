@@ -102,18 +102,19 @@ def get_munit_coords(munit_list_dict, stack_key, ref_frame='motor', ng_scaling=[
     """
     
     motor_coords = np.stack((stack.StackSet.Unit & stack_key & munit_list_dict).fetch('munit_x', 'munit_y', 'munit_z')).T
-    
+
     if ref_frame == 'motor':
         return motor_coords
     
     center_xyz_um = np.array([*(stack.CorrectedStack() & stack_key).fetch1('x', 'y', 'z')])
     lengths_xyz_um = np.array([*(stack.CorrectedStack() & stack_key).fetch1('um_width', 'um_height', 'um_depth')])
+    np_coords = np.array(motor_coords) - np.array(center_xyz_um) + np.array(lengths_xyz_um) / 2
     
     if ref_frame == 'numpy':
-        return np.array(motor_coords) - np.array(center_xyz_um) + np.array(lengths_xyz_um) / 2 
+         return np_coords
     
     if ref_frame == 'ng':
-        return np.round((np.array(motor_coords) - np.array(center_xyz_um) + np.array(lengths_xyz_um) / 2)*ng_scaling)
+            return np*ng_scaling
 
 def create_grid(um_sizes, desired_res=1):
     """ Create a grid corresponding to the sample position of each pixel/voxel in a FOV of
