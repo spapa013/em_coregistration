@@ -2,6 +2,10 @@ import numpy as np
 import datajoint as dj
 import pandas as pd
 import torch
+from torch.nn import functional as F
+import matplotlib.pyplot as plt
+import re
+from PIL import Image
 
 plat = dj.create_virtual_module('pipeline_platinum','pipeline_platinum')
 meso = dj.create_virtual_module('pipeline_meso', 'pipeline_meso')
@@ -88,7 +92,7 @@ def get_munit_ids(scan_relation, stack_key, brain_area, tuning=None, oracle_thre
 
 def get_munit_coords(munit_list_dict, stack_key, ref_frame='motor', ng_scaling=[250,250,1]):
     """
-    function that takes in a list of munits
+    function that takes in a list of munits and returns coordinates according to the specified reference frame
     
     :param munit_list_dict: list of dictionaries of munits id's to restrict the stack datajoint table relation
     :param stack_key: the key to restrict the stack datajoint table relation to the specified structural stack
@@ -101,7 +105,13 @@ def get_munit_coords(munit_list_dict, stack_key, ref_frame='motor', ng_scaling=[
     
     """
     
-    motor_coords = np.stack((stack.StackSet.Unit & stack_key & munit_list_dict).fetch('munit_x', 'munit_y', 'munit_z')).T
+    rel = np.stack((stack.StackSet.Unit & stack_key & munit_list_dict).fetch('munit_id', 'munit_x', 'munit_y', 'munit_z')).T
+
+    if len(munit_list_dict) > 1:
+        rel_ordered = rel[np.array([np.where(rel==munit_list_dict[i]['munit_id'])[0][0] for i in range(len(munit_list_dict))]),...] # reorders output motor coords according to input order
+        motor_coords = rel_ordered.copy()[:,1:]
+    else:
+        motor_coords = rel.copy()[:,1:]
 
     if ref_frame == 'motor':
         return motor_coords
@@ -114,7 +124,7 @@ def get_munit_coords(munit_list_dict, stack_key, ref_frame='motor', ng_scaling=[
          return np_coords
     
     if ref_frame == 'ng':
-            return np*ng_scaling
+        return np_coords*ng_scaling
 
 def create_grid(um_sizes, desired_res=1):
     """ Create a grid corresponding to the sample position of each pixel/voxel in a FOV of
@@ -266,3 +276,149 @@ def plot_grids(self, desired_res=5):
     ax.invert_zaxis()
 
     return fig
+
+def get_fields(chosen_cell, scans, stack_key, functional_image='average', stack_data=None, figsize=(10,10), dpi=100, plot=True):
+    """
+    function that takes in an munit_id, a set of scans, and a stack, and returns the field key and a set of summary images for each scan_session and scan_idx the munit appears in:
+    The summary images are as follows:
+    1) scan summary image which will be one of: average, correlation, l6norm, hybrid image depending on specification in argument 'functional_image'
+    2) the relevant stack field after registering the imaging field inside the stack
+    3) the relevant 3D segmentation image after registering the imaging field
+    
+    :param chosen_cell: dictionary of munit id formatted as such: {'munit_id':00000}
+    :param scans: the key to restrict the stack datajoint table relation to the specified functional scans
+    :param stack_key: the relevant stack to restrict with
+    :param functional_image: specifies what kind of summary image to use for the Scan summary image. Can be a single image type or a mathematical combination of multiple images. 
+                             Individual image options are 'average', 'correlation', 'l6norm', 'oracle'.
+                             Example mathematical combinations:
+                                1) functional_image='average*correlation'
+                                2) functional_image='oracle**2'
+                                3) functional_image='(average*correlation)-l6norm'
+    :param stack_data: optional, can include the stack desired to sample from using sample_grid(). Default is None, which provides the stack image in stack.Registration.Affine()
+    :param figsize: specify the size of the figure
+    :param dpi: desired dpi of summary images
+    :param: if plot is True, will return summary images
+
+    :return: For each scan_session and scan_idx returns:
+                Field key
+                if plot is True:
+                    Scan summary image 
+                    Stack summary image 
+                    3D segmentation image
+
+    """
+    
+    field_munit_relation_table = meso.ScanSet.Unit * (stack.StackSet.Match & stack_key & chosen_cell).proj(session='scan_session') & scans
+    field_munit_relation_table
+
+    # choose an example cell and get unit_id's (unique id's per scan)
+    field_munit_relation_keys = (dj.U('animal_id', 'stack_session', 'stack_idx', 'segmentation_method', 'session','scan_idx','field') & field_munit_relation_table).fetch('KEY')
+
+    if plot:
+        dict_images = {'average': '(meso.SummaryImages.Average() & key).fetch1("average_image")',
+                    'correlation': '(meso.SummaryImages.Correlation() & key).fetch1("correlation_image")',
+                    'l6norm': '(meso.SummaryImages.L6Norm() & key).fetch1("l6norm_image")',
+                    'oracle': '(tune.OracleMap() & key).fetch1("oracle_map")'}
+        
+        # plot scan fields
+        for key in field_munit_relation_keys:
+            
+            temp = functional_image
+            out = []
+            for image_type in ('average', 'correlation', 'l6norm', 'oracle'):
+                match = re.findall(image_type, temp)
+                out.append(match)
+            filtered_match = list(filter(None, out))
+            for match in filtered_match:
+                temp = temp.replace(match[0], dict_images[match[0]])
+            
+            grid = get_grid(stack.Registration() & key & {'scan_session':key['session']}, desired_res=1)
+            distance_mask = np.sqrt(((grid - get_munit_coords(chosen_cell, stack_key, ref_frame='motor'))**2).sum(-1)) # for localizing cell
+
+            if stack_data is not None:
+                stack_x, stack_y, stack_z = (stack.CorrectedStack & stack_key).fetch1('x', 'y', 'z')
+                recentered_grid = grid - np.array([stack_x, stack_y, stack_z]) # move center of stack to be (0, 0, 0)
+                stack_field = sample_grid(stack_data, recentered_grid).numpy()
+            else:
+                stack_field = (stack.Registration.Affine() & key & {'scan_session':key['session']}).fetch1('reg_field')
+    
+            segm_field = (stack.FieldSegmentation() & key & {'scan_session':key['session']}).fetch1('segm_field')
+            
+            # resize the scan field image to match the dimensions of the grid
+            scan_field = Image.fromarray(eval(temp))
+            scan_field_reshape = scan_field.resize(stack_field.T.shape)
+
+            fig, axes = plt.subplots(1, 3, figsize=figsize)
+            axes[0].imshow(np.array(scan_field_reshape))
+            axes[1].imshow(stack_field)
+            axes[2].imshow(segm_field)
+
+            for ax in axes:
+                ax.imshow((distance_mask<20) & (distance_mask>15), cmap='gray', alpha=0.2)
+
+            axes[0].set_title(f'Scan field: \n {functional_image}')
+            axes[1].set_title('Field taken from the stack')
+            axes[2].set_title('3-d segmentation of field')
+
+            fig.suptitle(f'scan_session: {key["session"]}, scan_idx: {key["scan_idx"]}, field: {key["field"]}, units: $\mu$m \n munit_id: {chosen_cell["munit_id"]}', y=0.80, fontsize=18)
+            fig.set_dpi(dpi)
+    return field_munit_relation_keys
+
+def update_link_voxels(provided_link, voxels, version='none'):
+    """
+    Function that takes in a neuroglancer link, parses the link to identify the region containing the voxel coordinates, then replaces with the desired voxel coordinates
+        
+    :param provided_link: the neuroglancer link within which you wish to replace the voxel coordinates
+    :param EM_voxels: a 1 or 2D numpy array of voxel coordinates
+    :param version: specify whether the provided link originates from the EM neuroglancer or 2P neuroglancer
+    
+    :return: if version=='EM' returns updated EM neuroglancer link with provided voxel coordinates
+             if version=='2P' returns 2P neuroglancer link with provided voxel coordinates
+    """
+    
+    # generate new snippet with new coordinates
+    if version == 'EM':
+        new_coordinates_template = '%22:%5BXXX%2CYYY%2CZZZ%5D%7D%2C%22'
+    if version == '2P':
+        new_coordinates_template = '%22:%5BXXX%2CYYY%2CZZZ%5D%7D%7D%2C%22'
+    if version == 'none':
+        return print('argument version must be "2P" or "EM"')
+    x,y,z = voxels.squeeze()
+    new_coordinates_snippet = new_coordinates_template.replace('XXX',str(x))
+    new_coordinates_snippet = new_coordinates_snippet.replace('YYY',str(y))
+    new_coordinates_snippet = new_coordinates_snippet.replace('ZZZ',str(z))
+    
+    # find relevant section in provided link and create snippet
+    matches = re.search('voxelCoordinates', provided_link)
+    snippet = provided_link[matches.start()+len(matches.group()):matches.start()+150]
+    next_keyword = re.findall('[a-z]+',snippet)[0]
+    next_keyword_match = re.search(next_keyword,provided_link)
+    snippet_to_replace = provided_link[matches.start()+len(matches.group()):next_keyword_match.start()]
+    updated_link = provided_link.replace(snippet_to_replace, new_coordinates_snippet)
+    
+    return updated_link
+
+def sample_grid(volume, grid):
+    """ 
+    Sample grid in volume.
+
+    Assumes center of volume is at (0, 0, 0) and grid and volume have the same resolution.
+
+    :param torch.Tensor volume: A d x h x w tensor. The stack.
+    :param torch.Tensor grid: A d1 x d2 x 3 (x, y, z) tensor. The coordinates to sample.
+
+    :return: A d1 x d2 tensor. The grid sampled in the stack.
+    """
+    # Make sure input is tensor
+    volume = torch.as_tensor(volume, dtype=torch.float32)
+    grid = torch.as_tensor(grid, dtype=torch.float32)
+
+    # Rescale grid so it ranges from -1 to 1 (as expected by F.grid_sample)
+    norm_factor = torch.as_tensor([s / 2 - 0.5 for s in volume.shape[::-1]])
+    norm_grid = grid / norm_factor
+
+    # Resample
+    resampled = F.grid_sample(volume[None, None, ...], norm_grid[None, None, ...], padding_mode='zeros')
+    resampled = resampled.squeeze() # drop batch and channel dimension
+
+    return resampled
