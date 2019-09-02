@@ -30,7 +30,7 @@ example2 = {
             'sd_set': {'src': 'opt', 'dst': 'em'}
         },
         #'output_json': '/allen/programs/celltypes/workgroups/em-connectomics/danielk/em_coregistration/tmp_out/transform.json',
-        'output_json': '/src/em2p_coreg/python/em2p_coreg/outputs/transform.json',
+        'output_json': '/src/em2p_coreg/python/em2p_coreg/outputs/ex2_transform.json',
         'model': 'TPS',
         'npts': 10,
         'regularization': {
