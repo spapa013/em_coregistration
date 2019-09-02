@@ -13,7 +13,7 @@ example1 = {
             'sd_set': {'src': 'em', 'dst': 'opt'}
         },
         #'output_json': '/allen/programs/celltypes/workgroups/em-connectomics/danielk/em_coregistration/tmp_out/transform.json',
-        'output_json': '/src/em2p_coreg/python/em2p_coreg/outputs/transform.json',
+        'output_json': '/src/em2p_coreg/python/em2p_coreg/outputs/ex1_transform.json',
         'model': 'TPS',
         'npts': 10,
         'regularization': {
