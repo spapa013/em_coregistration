@@ -6,6 +6,9 @@ from torch.nn import functional as F
 import matplotlib.pyplot as plt
 import re
 from PIL import Image
+import json
+import urllib
+from scipy import ndimage
 
 plat = dj.create_virtual_module('pipeline_platinum','pipeline_platinum')
 meso = dj.create_virtual_module('pipeline_meso', 'pipeline_meso')
@@ -277,11 +280,34 @@ def plot_grids(self, desired_res=5):
 
     return fig
 
-def get_fields(chosen_cell, scans, stack_key, functional_image='average', stack_data=None, figsize=(10,10), dpi=100, plot=True):
+def get_fields(chosen_cell, scans, stack_key):
     """
     function that takes in an munit_id, a set of scans, and a stack, and returns the field key and a set of summary images for each scan_session and scan_idx the munit appears in:
     The summary images are as follows:
     1) scan summary image which will be one of: average, correlation, l6norm, hybrid image depending on specification in argument 'functional_image'
+    2) the relevant stack field after registering the imaging field inside the stack
+    3) the relevant 3D segmentation image after registering the imaging field
+    
+    :param chosen_cell: dictionary of munit id formatted as such: {'munit_id':00000}
+    :param scans: the key to restrict the stack datajoint table relation to the specified functional scans
+    :param stack_key: the relevant stack to restrict with
+
+    :return: List of field keys For each scan_session and scan_idx returns:
+    """
+    
+    field_munit_relation_table = meso.ScanSet.Unit * (stack.StackSet.Match & stack_key & chosen_cell).proj('munit_id', session='scan_session') & scans
+    field_munit_relation_table
+
+    # choose an example cell and get unit_id's (unique id's per scan)
+    field_munit_relation_keys = (dj.U('animal_id', 'stack_session', 'stack_idx', 'segmentation_method', 'session','scan_idx','field', 'munit_id') & field_munit_relation_table).fetch('KEY')
+
+    return field_munit_relation_keys
+
+def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='average', cell_stack=None, vessel_stack=None, figsize=(10,10), dpi=100, locate_cell=True, share=True, enhance=True):
+    """
+    function that takes in a field key, and optional 2P and EM stacks, and returns a plot of the imaging field and slices of the field from the stacks.
+    The images are as follows:
+    1) functional scan image which will be one of: average, correlation, l6norm, hybrid image depending on specification in argument 'functional_image'
     2) the relevant stack field after registering the imaging field inside the stack
     3) the relevant 3D segmentation image after registering the imaging field
     
@@ -307,62 +333,78 @@ def get_fields(chosen_cell, scans, stack_key, functional_image='average', stack_
                     3D segmentation image
 
     """
-    
-    field_munit_relation_table = meso.ScanSet.Unit * (stack.StackSet.Match & stack_key & chosen_cell).proj(session='scan_session') & scans
-    field_munit_relation_table
+    ## Get grid
+    grid = get_grid(stack.Registration() & field_key & {'scan_session':field_key['session']}, desired_res=1)
+    distance_mask = np.sqrt(((grid - get_munit_coords({'munit_id': field_key['munit_id']}, {'stack_idx':field_key['stack_idx']}, ref_frame='motor'))**2).sum(-1)) # for localizing cell
+    stack_x, stack_y, stack_z = (stack.CorrectedStack & {'animal_id':field_key['animal_id'], 'stack_idx':field_key['stack_idx']}).fetch1('x', 'y', 'z')
 
-    # choose an example cell and get unit_id's (unique id's per scan)
-    field_munit_relation_keys = (dj.U('animal_id', 'stack_session', 'stack_idx', 'segmentation_method', 'session','scan_idx','field') & field_munit_relation_table).fetch('KEY')
-
-    if plot:
-        dict_images = {'average': '(meso.SummaryImages.Average() & key).fetch1("average_image")',
-                    'correlation': '(meso.SummaryImages.Correlation() & key).fetch1("correlation_image")',
-                    'l6norm': '(meso.SummaryImages.L6Norm() & key).fetch1("l6norm_image")',
-                    'oracle': '(tune.OracleMap() & key).fetch1("oracle_map")'}
+    ## Functional image
+    dict_images = {'average': '(meso.SummaryImages.Average() & field_key).fetch1("average_image")',
+                    'correlation': '(meso.SummaryImages.Correlation() & field_key).fetch1("correlation_image")',
+                    'l6norm': '(meso.SummaryImages.L6Norm() & field_key).fetch1("l6norm_image")',
+                    'oracle': '(tune.OracleMap() & field_key).fetch1("oracle_map")'}
         
-        # plot scan fields
-        for key in field_munit_relation_keys:
-            
-            temp = functional_image
-            out = []
-            for image_type in ('average', 'correlation', 'l6norm', 'oracle'):
-                match = re.findall(image_type, temp)
-                out.append(match)
-            filtered_match = list(filter(None, out))
-            for match in filtered_match:
-                temp = temp.replace(match[0], dict_images[match[0]])
-            
-            grid = get_grid(stack.Registration() & key & {'scan_session':key['session']}, desired_res=1)
-            distance_mask = np.sqrt(((grid - get_munit_coords(chosen_cell, stack_key, ref_frame='motor'))**2).sum(-1)) # for localizing cell
-
-            if stack_data is not None:
-                stack_x, stack_y, stack_z = (stack.CorrectedStack & stack_key).fetch1('x', 'y', 'z')
-                recentered_grid = grid - np.array([stack_x, stack_y, stack_z]) # move center of stack to be (0, 0, 0)
-                stack_field = sample_grid(stack_data, recentered_grid).numpy()
-            else:
-                stack_field = (stack.Registration.Affine() & key & {'scan_session':key['session']}).fetch1('reg_field')
     
-            segm_field = (stack.FieldSegmentation() & key & {'scan_session':key['session']}).fetch1('segm_field')
+    temp = functional_image
+    out = []
+    for image_type in ('average', 'correlation', 'l6norm', 'oracle'):
+        match = re.findall(image_type, temp)
+        out.append(match)
+    filtered_match = list(filter(None, out))
+    for match in filtered_match:
+        temp = temp.replace(match[0], dict_images[match[0]])
             
-            # resize the scan field image to match the dimensions of the grid
-            scan_field = Image.fromarray(eval(temp))
-            scan_field_reshape = scan_field.resize(stack_field.T.shape)
+    # resize the scan field image to match the dimensions of the grid
+    scan_field = eval(temp)
+    if enhance:
+        scan_field = sharpen_2pimage(lcn(scan_field, 2.5))
+        enhance_string = 'enhanced'
+    else:
+        enhance_string = None
+    
+    scan_field_reshape = resize(scan_field, (meso.ScanInfo.Field() & field_key).fetch1('um_height', 'um_width'), desired_res=1)
+    
+    ## Stack image
+    if cell_stack is not None:
+        recentered_grid = grid - np.array([stack_x, stack_y, stack_z]) # move center of stack to be (0, 0, 0)
+        stack_field = sample_grid(cell_stack, recentered_grid).numpy()
+        stack_name = 'the provided stack'
+    else:
+        stack_field = (stack.Registration.Affine() & field_key & {'scan_session':field_key['session']}).fetch1('reg_field')
+        stack_name = 'Registration.Affine() stack'
 
-            fig, axes = plt.subplots(1, 3, figsize=figsize)
-            axes[0].imshow(np.array(scan_field_reshape))
-            axes[1].imshow(stack_field)
-            axes[2].imshow(segm_field)
+    ## Vessel image
+    vessel_field = sample_grid(vessel_stack, recentered_grid).numpy()
 
-            for ax in axes:
-                ax.imshow((distance_mask<20) & (distance_mask>15), cmap='gray', alpha=0.2)
+    ## Segmentation image
+    segm_field = (stack.FieldSegmentation() & field_key & {'scan_session':field_key['session']}).fetch1('segm_field')
+    
+    ## EM Image
+    temp_grid = (EM_grid - EM_center)/ 1000
+    EM_field = sample_grid(EM_data, temp_grid).numpy()
 
-            axes[0].set_title(f'Scan field: \n {functional_image}')
-            axes[1].set_title('Field taken from the stack')
-            axes[2].set_title('3-d segmentation of field')
+    if share:
+        fig, axes = plt.subplots(1, 5, figsize=figsize, sharex=True, sharey=True)
+    else:
+        fig, axes = plt.subplots(1, 5, figsize=figsize)
+    axes[0].imshow(np.array(scan_field_reshape))
+    axes[1].imshow(stack_field)
+    axes[2].imshow(vessel_field)
+    axes[3].imshow(segm_field)
+    axes[4].imshow(-EM_field, cmap='gray')
 
-            fig.suptitle(f'scan_session: {key["session"]}, scan_idx: {key["scan_idx"]}, field: {key["field"]}, units: $\mu$m \n munit_id: {chosen_cell["munit_id"]}', y=0.80, fontsize=18)
-            fig.set_dpi(dpi)
-    return field_munit_relation_keys
+    if locate_cell:
+        for ax in axes:
+            ax.imshow((distance_mask<20) & (distance_mask>15), cmap='gray', alpha=0.2)
+
+    axes[0].set_title(f'Scan field: {enhance_string} \n {functional_image}')
+    axes[1].set_title(f'Field taken from \n {stack_name}')
+    axes[2].set_title(f'Field taken from \n vessels')
+    axes[3].set_title('3-d segmentation')
+    axes[4].set_title('Field taken from \n resized EM')
+
+    fig.suptitle(f'scan_session: {field_key["session"]}, scan_idx: {field_key["scan_idx"]}, field: {field_key["field"]}, units: $\mu$m \n munit_id: {field_key["munit_id"]}', y=0.75, fontsize=18)
+    fig.set_dpi(dpi)
 
 def update_link_voxels(provided_link, voxels, version='none'):
     """
@@ -422,3 +464,90 @@ def sample_grid(volume, grid):
     resampled = resampled.squeeze() # drop batch and channel dimension
 
     return resampled
+
+def html_to_json(url_string, return_parsed_url=False, fragment_prefix='!'):
+    # Parse neuromancer url to logically separate the json state dict from the rest of it.
+    full_url_parsed = urllib.parse.urlparse(url_string)
+    # Decode percent-encoding in url, and skip "!" from beginning of string.
+    decoded_fragment = urllib.parse.unquote(full_url_parsed.fragment)
+    if decoded_fragment.startswith(fragment_prefix):
+        decoded_fragment = decoded_fragment[1:]
+    # Load the json state dict string into a python dictionary.
+    json_state_dict = json.loads(decoded_fragment)
+
+    if return_parsed_url:
+        return json_state_dict, full_url_parsed
+    else:
+        return json_state_dict
+
+def add_point_annotations(provided_link, ano_name, ano_list, voxelsize, overwrite=True):
+    # format annotation list
+    ano_list_dict = []
+    if ano_list.ndim<2:
+        ano_list = np.expand_dims(ano_list,0)
+    if ano_list.ndim>2:
+        return print('The annotation list must be 1D or 2D')
+    for i, ano in enumerate(ano_list):
+        ano_list_dict.append({'point':ano.tolist(), 'type':'point', 'id':str(i+1)})
+
+    json_data, parsed_url = html_to_json(provided_link, return_parsed_url=True)
+    # if annotation layer doesn't exist, create it
+    if re.search(ano_name,json.dumps(json_data)) is None:
+        json_data['layers'].append({'tool': 'annotatePoint',
+                               'type': 'annotation',
+                               'annotations': [],
+                               'annotationTags': [],
+                               'voxelSize': voxelsize,
+                               'name': ano_name})
+        print('annotation layer does not exist... creating it')
+    annotation_dict = list(filter(lambda _: _['name'] == ano_name, json_data['layers']))
+    annotation_ind = np.where(np.array(json_data['layers']) == annotation_dict)[0][0].squeeze()
+    # test if voxel size of annotation matches provided voxel size
+    if json_data['layers'][annotation_ind]['voxelSize']!=voxelsize:
+        return print('The annotation layer already exists but does not match your provided voxelsize')
+    # add annotations
+    if overwrite:
+        json_data['layers'][annotation_ind]['annotations'] = ano_list_dict
+    else:
+        json_data['layers'][annotation_ind]['annotations'].extend(ano_list_dict)
+
+    return urllib.parse.urlunparse([parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, parsed_url.query, '!'+ urllib.parse.quote(json.dumps(json_data))])
+
+def coordinate(grid_to_transform):
+    x = grid_to_transform.shape[0]
+    y = grid_to_transform.shape[1]
+    return grid_to_transform.reshape(x*y,-1)
+
+def uncoordinate(transformed_coordinates,x,y):
+    return transformed_coordinates.reshape(x,y,-1)
+
+def lcn(image, sigmas=(12, 12)):
+    """ Local contrast normalization.
+    Normalize each pixel using mean and stddev computed on a local neighborhood.
+    We use gaussian filters rather than uniform filters to compute the local mean and std
+    to soften the effect of edges. Essentially we are using a fuzzy local neighborhood.
+    Equivalent using a hard defintion of neighborhood will be:
+        local_mean = ndimage.uniform_filter(image, size=(32, 32))
+    :param np.array image: Array with raw two-photon images.
+    :param tuple sigmas: List with sigmas (one per axis) to use for the gaussian filter.
+        Smaller values result in more local neighborhoods. 15-30 microns should work fine
+    """
+    local_mean = ndimage.gaussian_filter(image, sigmas)
+    local_var = ndimage.gaussian_filter(image ** 2, sigmas) - local_mean ** 2
+    local_std = np.sqrt(np.clip(local_var, a_min=0, a_max=None))
+    norm = (image - local_mean) / (local_std + 1e-7)
+
+    return norm
+
+
+def sharpen_2pimage(image, laplace_sigma=0.7, low_percentile=3, high_percentile=99.9):
+    """ Apply a laplacian filter, clip pixel range and normalize.
+    :param np.array image: Array with raw two-photon images.
+    :param float laplace_sigma: Sigma of the gaussian used in the laplace filter.
+    :param float low_percentile, high_percentile: Percentiles at which to clip.
+    :returns: Array of same shape as input. Sharpened image.
+    """
+    sharpened = image - ndimage.gaussian_laplace(image, laplace_sigma)
+    clipped = np.clip(sharpened, *np.percentile(sharpened, [low_percentile, high_percentile]))
+    norm = (clipped - clipped.mean()) / (clipped.max() - clipped.min() + 1e-7)
+    return norm
