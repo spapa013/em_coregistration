@@ -170,6 +170,24 @@ def list_points_by_res_mag(res, labels, n=np.inf, factor=0.001):
         print('%10s, %0.1f' % (labels[ind][i], mag[ind][i] * factor))
         i += 1
 
+def leave_out(data, index):
+    if index is None:
+        return data, None
+    else:
+        keep = np.ones(data['labels'].size).astype(bool)
+        keep[index] = False
+        kdata = {
+                'src': data['src'][keep],
+                'dst': data['dst'][keep],
+                'labels': data['labels'][keep]
+                }
+        keep = np.invert(keep)
+        ldata = {
+                'src': data['src'][keep],
+                'dst': data['dst'][keep],
+                'labels': data['labels'][keep]
+                }
+        return kdata, ldata
 
 class Solve3D(argschema.ArgSchemaParser):
     """class to solve a 3D coregistration problem"""
@@ -190,11 +208,13 @@ class Solve3D(argschema.ArgSchemaParser):
         d.run()
         self.data = d.data
 
+
         if control_pts is None:
             if self.args['npts']:
                 control_pts = control_pts_from_bounds(
                         self.data['src'],
                         self.args['npts'])
+        self.data, self.left_out = leave_out(self.data, self.args['leave_out_index'])
 
         self.transform = Transform(
                 self.args['model'], control_pts=control_pts)
@@ -232,5 +252,4 @@ if __name__ == '__main__':
     smod.run()
     smod = Solve3D(input_data=example2)
     smod.run()
-    smod =  Solve3D(input_data=mydata)
-    smod.run()
+
