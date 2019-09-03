@@ -17,7 +17,7 @@ services:
       - ./notebooks:/notebooks
       - .:/src/em2p_coreg
       - $NOTEBOOKS:/notebooks/shared
-      - $FIGURES:/notebooks/figures
+      - $FIGURES:/notebooks/Dropbox_Figures_Folder
     entrypoint:
       - jupyter
       - lab
