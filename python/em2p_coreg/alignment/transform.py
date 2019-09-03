@@ -214,3 +214,12 @@ class Transform():
         self.model = j['model']
         self.parameters = np.array(j['parameters'])
         self.control_pts = np.array(j['control_pts'])
+
+class StagedTransform():
+    def __init__(self, tflist):
+        self.tflist = tflist
+    def transform(self, coords):
+       x = np.copy(coords) 
+       for tf in self.tflist:
+           x = tf.transform(x)
+       return x
