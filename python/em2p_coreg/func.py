@@ -10,7 +10,8 @@ anatomy = dj.create_virtual_module('pipeline_anatomy', 'pipeline_anatomy')
 radtune = dj.create_virtual_module('pipeline_radtune','pipeline_radtune')
 spattune = dj.create_virtual_module('pipeline_spattune','pipeline_spattune')
 
-def get_munit_ids(scan_relation, stack_key, brain_area, tuning=None, oracle_threshold=0.2, von_p_threshold=0.05, snr_threshold=1.3, n_scan_threshold=1, limit=10, as_list_dict=True):
+def get_munit_ids(scan_relation, stack_key, brain_area, tuning=None, oracle_threshold=0.2, von_p_threshold=0.05, \
+                  snr_threshold=1.3, n_scan_threshold=1, limit=10, xmin=None, xmax=None, ymin=None, ymax=None, zmin=None, zmax=None, return_format=None):
     """
     Queries the database to find cells from the list of specified scans,
     uniquely registered into the specified structural stack and listed under the specified
@@ -45,44 +46,88 @@ def get_munit_ids(scan_relation, stack_key, brain_area, tuning=None, oracle_thre
     rad = (radtune.VonFit.Unit & 'animal_id = 17797' & 'vonfit_method = 3' & 'ori_type = "dir"' & von_p_thre).proj('von_p_value', scan_session = 'session')
     spat = (spattune.STA.Loc() & 'animal_id = 17797' & 'stimgroup_id = 1' & 'center_x BETWEEN 5 AND 155 and center_y BETWEEN 5 AND 85' & snr_thre).proj('snr', scan_session = 'session')
    
-    tot_munits = stack.StackSet.Match() & (stack.CorrectedStack & stack_key).proj(stack_session = 'session') & scan_relation.proj(scan_session = 'session')
-    munits = tot_munits * anatomy.AreaMembership.proj('brain_area', scan_session = 'session') 
-    munit_oracle = (tune.MovieOracle.Total & oracle_thre).proj('trials', 'pearson', scan_session = 'session') * munits
+    munits_original = (stack.StackSet.Match() * stack.StackSet.Unit() * (stack.CorrectedStack & stack_key)) & scan_relation.proj(scan_session = 'session')
+    munits_interm = munits_original.proj(np_x = 'munit_x - x + um_width/2', np_y = 'munit_y - y + um_height/2', np_z = 'munit_z - z + um_depth/2')
+    
+    # distance thresholds in numpy coordinates
+    if xmin is not None: xmin_thresh = f'np_x > {xmin}'
+    else: xmin_thresh = 'np_x > 0'
+    if ymin is not None: ymin_thresh = f'np_y > {ymin}'
+    else: ymin_thresh = 'np_y > 0'
+    if zmin is not None: zmin_thresh = f'np_z > {zmin}'
+    else: zmin_thresh = 'np_z > 0'
+    if xmax is not None: xmax_thresh = f'np_x < {xmax}'
+    else: xmax_thresh = f'np_x < {(stack.CorrectedStack & stack_key).fetch1("um_width")}'
+    if ymax is not None: ymax_thresh = f'np_y < {ymax}'
+    else: ymax_thresh = f'np_y < {(stack.CorrectedStack & stack_key).fetch1("um_height")}'
+    if zmax is not None: zmax_thresh = f'np_z < {zmax}'
+    else: zmax_thresh = f'np_z < {(stack.CorrectedStack & stack_key).fetch1("um_depth")}'
+
+    munits_distance_thresh = munits_interm & xmin_thresh & ymin_thresh & zmin_thresh & xmax_thresh & ymax_thresh & zmax_thresh
+    munits_brain_area = munits_distance_thresh * anatomy.AreaMembership.proj('brain_area', scan_session = 'session') 
+    munit_source = (tune.MovieOracle.Total & oracle_thre).proj('trials', 'pearson', scan_session = 'session') * munits_brain_area
+
     
     if tuning == 'rad':
-        munit_oracle_ext = munit_oracle * rad
-        good_oracle = dj.U('munit_id', 'brain_area').aggr(munit_oracle_ext, n_scan = 'count(DISTINCT(scan_idx))', avg_pearson = 'avg(pearson)', avg_von_p = 'avg(von_p_value)')
-        df = pd.DataFrame(good_oracle.fetch())
-        df_sorted = (df.sort_values(['n_scan', 'avg_pearson', 'avg_von_p'], ascending = [0, 0, 1])).reset_index(drop=True)
-        
+        munit_info = munit_source * rad
+        munit_aggr = dj.U('munit_id', 'brain_area').aggr(munit_info, n_scan = 'count(DISTINCT(scan_idx))', avg_pearson = 'avg(pearson)', avg_von_p = 'avg(von_p_value)',\
+                                                                     avg_x = 'avg(np_x)', avg_y = 'avg(np_y)', avg_z = 'avg(np_z)')
+        df = pd.DataFrame(munit_aggr.fetch())
+        df['von_p_rank'] = df['avg_von_p'].rank(method='min')
+        df['pearson_rank'] = df['avg_pearson'].rank(method='min', ascending=False)
+        df['average_rank'] = (df['von_p_rank'] + df['pearson_rank'])/2
+        df_sorted = df.sort_values('average_rank').reset_index(drop=True)
+
     elif tuning == 'spat':
-        munit_oracle_ext = munit_oracle * spat
-        good_oracle = dj.U('munit_id', 'brain_area').aggr(munit_oracle_ext, n_scan = 'count(DISTINCT(scan_idx))', avg_pearson = 'avg(pearson)', avg_snr = 'avg(snr)')
-        df = pd.DataFrame(good_oracle.fetch())
-        df_sorted = (df.sort_values(['n_scan', 'avg_pearson', 'avg_snr'], ascending = [0, 0, 0])).reset_index(drop=True)
+        munit_info = munit_source * spat
+        munit_aggr = dj.U('munit_id', 'brain_area').aggr(munit_info, n_scan = 'count(DISTINCT(scan_idx))', avg_pearson = 'avg(pearson)', avg_snr = 'avg(snr)', \
+                                                                     avg_x = 'avg(np_x)', avg_y = 'avg(np_y)', avg_z = 'avg(np_z)')
+        df = pd.DataFrame(munit_aggr.fetch())
+        df['snr_rank'] = df['avg_snr'].rank(method='min', ascending=False)
+        df['pearson_rank'] = df['avg_pearson'].rank(method='min', ascending=False)
+        df['average_rank'] = (df['snr_rank'] + df['pearson_rank']) / 2
+        df_sorted = df.sort_values('average_rank').reset_index(drop=True)
+        
     
     elif tuning == 'both':
-        munit_oracle_ext = munit_oracle * rad * spat
-        good_oracle = dj.U('munit_id', 'brain_area').aggr(munit_oracle_ext, n_scan = 'count(DISTINCT(scan_idx))', avg_pearson = 'avg(pearson)', avg_von_p = 'avg(von_p_value)', avg_snr = 'avg(snr)')
-        df = pd.DataFrame(good_oracle.fetch())
-        df_sorted = (df.sort_values(['n_scan', 'avg_pearson', 'avg_von_p', 'avg_snr'], ascending = [0, 0, 0, 0])).reset_index(drop=True)
-    
-    else:
-        good_oracle = dj.U('munit_id', 'brain_area').aggr(munit_oracle, n_scan = 'count(DISTINCT(scan_idx))', avg_pearson = 'avg(pearson)')
-        df = pd.DataFrame(good_oracle.fetch())
-        df_sorted = (df.sort_values(['n_scan', 'avg_pearson'], ascending = [0, 0])).reset_index(drop=True)
+        munit_info = munit_source * rad * spat
+        munit_aggr = dj.U('munit_id', 'brain_area').aggr(munit_info, n_scan = 'count(DISTINCT(scan_idx))', avg_pearson = 'avg(pearson)', avg_von_p = 'avg(von_p_value)', \
+                                                                     avg_snr = 'avg(snr)', avg_x = 'avg(np_x)', avg_y = 'avg(np_y)', avg_z = 'avg(np_z)')
+        df = pd.DataFrame(munit_aggr.fetch())
+        df['snr_rank'] = df['avg_snr'].rank(method='min', ascending=False)
+        df['pearson_rank'] = df['avg_pearson'].rank(method='min', ascending=False)
+        df['von_p_rank'] = df['avg_von_p'].rank(method='min')
+        df['average_rank'] = (df['snr_rank'] + df['pearson_rank'] + df['von_p_rank']) / 3
+        df_sorted = df.sort_values('average_rank').reset_index(drop=True)
+        df_sorted
         
-    df_by_area = df_sorted[df_sorted['brain_area'] == brain_area]
-    df_by_area_scan = df_by_area[df_by_area['n_scan'] >= n_scan_threshold][:limit]['munit_id']
+    elif tuning == None:
+        munit_aggr = dj.U('munit_id', 'brain_area').aggr(munit_source, n_scan = 'count(DISTINCT(scan_idx))', avg_pearson = 'avg(pearson)',\
+                                                                       avg_x = 'avg(np_x)', avg_y = 'avg(np_y)', avg_z = 'avg(np_z)')
+        df = pd.DataFrame(munit_aggr.fetch())
+        df['pearson_rank'] = df['avg_pearson'].rank(method='min', ascending=False)
+        df_sorted = df.sort_values('pearson_rank').reset_index(drop=True)
     
-    if as_list_dict:
+    else: return print("'Tuning' must equal 'rad', 'spat', 'both', or 'None type'")
+
+    df_by_area = df_sorted[df_sorted['brain_area'] == brain_area]
+    df_final = df_by_area[df_by_area['n_scan'] >= n_scan_threshold][:limit].reset_index(drop=True)
+
+    def convert_to_list_dict(df_final):
         out = []
-        for munit in df_by_area_scan.values:
+        for munit in df_final['munit_id'].values:
             out.append({'munit_id':munit})
         return out
-    
-    else:
-        return df_by_area_scan.values    
+
+    if return_format == 'as_list_dict':
+        return convert_to_list_dict(df_final)
+
+    if return_format == 'as_list': return df_final['munit_id'].values
+
+    if return_format == 'both': 
+        return convert_to_list_dict(df_final), df_final
+        
+    else: return df_final
 
 def get_munit_coords(munit_list_dict, stack_key, ref_frame='motor', ng_scaling=[250,250,1]):
     """
@@ -220,7 +265,8 @@ def get_fields(chosen_cell, scans, stack_key):
 
     return field_munit_relation_keys
 
-def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='average', cell_stack=None, vessel_stack=None, figsize=(10,10), dpi=100, locate_cell=True, share=True, enhance=True):
+def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='average', cell_stack=None, vessel_stack=None, prob_stack=None, figsize=(10,10), dpi=100, locate_cell=False, share=False, enhance=False, combined=False, \
+                EM_field_clip_bounds=None, cell_field_clip_bounds=None, vess_field_clip_bounds=None, segm_field_clip_bounds=None, stack_field_clip_bounds=None):
     """
     function that takes in a field key, and optional 2P and EM stacks, and returns a plot of the imaging field and slices of the field from the stacks.
     The images are as follows:
@@ -279,11 +325,11 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
     else:
         enhance_string = None
     
-    scan_field_reshape = resize(scan_field, (meso.ScanInfo.Field() & field_key).fetch1('um_height', 'um_width'), desired_res=1)
+    cell_field = resize(scan_field, (meso.ScanInfo.Field() & field_key).fetch1('um_height', 'um_width'), desired_res=1)
     
     ## Stack image
+    recentered_grid = grid - np.array([stack_x, stack_y, stack_z]) # move center of stack to be (0, 0, 0)
     if cell_stack is not None:
-        recentered_grid = grid - np.array([stack_x, stack_y, stack_z]) # move center of stack to be (0, 0, 0)
         stack_field = sample_grid(cell_stack, recentered_grid).numpy()
         stack_name = 'the provided stack'
     else:
@@ -291,35 +337,76 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
         stack_name = 'Registration.Affine() stack'
 
     ## Vessel image
-    vessel_field = sample_grid(vessel_stack, recentered_grid).numpy()
+    vess_field = sample_grid(vessel_stack, recentered_grid).numpy()
 
     ## Segmentation image
-    segm_field = (stack.FieldSegmentation() & field_key & {'scan_session':field_key['session']}).fetch1('segm_field')
-    
+    if prob_stack is not None:
+        segm_field = sample_grid(prob_stack, recentered_grid).numpy()
+        segm_name = 'prob stack'
+    else: 
+        segm_field = (stack.FieldSegmentation() & field_key & {'scan_session':field_key['session']}).fetch1('segm_field')
+        segm_name = '3-D Segmentation'
     ## EM Image
     temp_grid = (EM_grid - EM_center)/ 1000
     EM_field = sample_grid(EM_data, temp_grid).numpy()
+    EM_image = normalize(EM_field,clip_bounds=EM_field_clip_bounds,scale=255, astype=np.float) #brighten EM image
 
-    if share:
-        fig, axes = plt.subplots(1, 5, figsize=figsize, sharex=True, sharey=True)
+    if not combined:
+        if share:
+            fig, axes = plt.subplots(1, 5, figsize=figsize, sharex=True, sharey=True)
+        else:
+            fig, axes = plt.subplots(1, 5, figsize=figsize)
+        axes[0].imshow(np.array(cell_field))
+        axes[1].imshow(stack_field)
+        axes[2].imshow(vess_field, cmap='Reds')
+        axes[3].imshow(segm_field)
+        axes[4].imshow(-EM_image, cmap='gray')
+
+        if locate_cell:
+            for ax in axes:
+                ax.imshow((distance_mask<20) & (distance_mask>15), cmap='gray', alpha=0.2)
+
+        axes[0].set_title(f'Scan field: {enhance_string} \n {functional_image}')
+        axes[1].set_title(f'Field taken from \n {stack_name}')
+        axes[2].set_title(f'Field taken from \n vessels')
+        axes[3].set_title(f'Field taken from \n {segm_name}')
+        axes[4].set_title('Field taken from \n resized EM')
+
+        fig.suptitle(f'scan_session: {field_key["session"]}, scan_idx: {field_key["scan_idx"]}, field: {field_key["field"]}, units: $\mu$m \n munit_id: {field_key["munit_id"]}', y=1, fontsize=18)
+        fig.set_dpi(dpi)
     else:
-        fig, axes = plt.subplots(1, 5, figsize=figsize)
-    axes[0].imshow(np.array(scan_field_reshape))
-    axes[1].imshow(stack_field)
-    axes[2].imshow(vessel_field)
-    axes[3].imshow(segm_field)
-    axes[4].imshow(-EM_field, cmap='gray')
+        #  combine scan field, vessel field, segm field as RGB images
+        if share:
+            fig, axes = plt.subplots(1,3,figsize=figsize, sharex=True, sharey=True)
+        else:
+            fig, axes = plt.subplots(1,3, figsize=figsize)
+        # generate functional, stack correlation image
+        combined_correlation_image = np.stack([normalize(cell_field, scale=255, clip_bounds=cell_field_clip_bounds, astype=np.uint8), \
+                                               normalize(stack_field, scale=255, clip_bounds=stack_field_clip_bounds, astype=np.uint8), \
+                                               np.zeros_like(segm_field).astype(np.uint8)],-1)
+        # generate overlays for combined EM image
+        vess_overlay = np.stack([np.ones_like(vess_field), np.zeros_like(vess_field), np.zeros_like(vess_field), normalize(vess_field, clip_bounds=vess_field_clip_bounds, astype=np.float)],-1)
+        segm_overlay = np.stack([np.zeros_like(segm_field), np.zeros_like(segm_field), np.ones_like(segm_field), normalize(segm_field, clip_bounds=segm_field_clip_bounds, astype=np.float)],-1)
+        # generate combined 2P image
+        combined_2P_image = np.stack([normalize(vess_field, scale=255, clip_bounds=vess_field_clip_bounds, astype=np.uint8), \
+                                      normalize(cell_field, scale=255, clip_bounds=cell_field_clip_bounds, astype=np.uint8), \
+                                      normalize(segm_field, scale=255, clip_bounds=segm_field_clip_bounds, astype=np.uint8)],-1)        
+        
+        # plot 
+        axes[0].imshow(combined_correlation_image)    
+        axes[1].imshow(combined_2P_image)
+        axes[2].imshow(-EM_image, alpha=1, cmap='gray')
+        axes[2].imshow(vess_overlay, alpha=1)
+        axes[2].imshow(segm_overlay, alpha=0.3)
 
-    if locate_cell:
-        for ax in axes:
-            ax.imshow((distance_mask<20) & (distance_mask>15), cmap='gray', alpha=0.2)
-
-    axes[0].set_title(f'Scan field: {enhance_string} \n {functional_image}')
-    axes[1].set_title(f'Field taken from \n {stack_name}')
-    axes[2].set_title(f'Field taken from \n vessels')
-    axes[3].set_title('3-d segmentation')
-    axes[4].set_title('Field taken from \n resized EM')
-
-    fig.suptitle(f'scan_session: {field_key["session"]}, scan_idx: {field_key["scan_idx"]}, field: {field_key["field"]}, units: $\mu$m \n munit_id: {field_key["munit_id"]}', y=0.75, fontsize=18)
-    fig.set_dpi(dpi)
+        if locate_cell:
+            for ax in axes:
+                ax.imshow((distance_mask<20) & (distance_mask>15), cmap='gray', alpha=0.2)
+        
+        axes[0].set_title(f'combined functional & stack')        
+        axes[1].set_title(f'combined {enhance_string} \n 2P image')
+        axes[2].set_title('functional and EM overlay')
+        fig.suptitle(f'scan_session: {field_key["session"]}, scan_idx: {field_key["scan_idx"]}, field: {field_key["field"]}, units: $\mu$m \n munit_id: {field_key["munit_id"]}', y=1, fontsize=15)
+        fig.set_dpi(dpi)
+        
 
