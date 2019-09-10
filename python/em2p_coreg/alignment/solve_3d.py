@@ -1,9 +1,10 @@
 import argschema
 from .schemas import SolverSchema
 from .data_handler import DataLoader
-from .transform import Transform
+from .transform import Transform, StagedTransform
 import numpy as np
 import scipy
+import copy
 
 example1 = {
         'data': {
@@ -245,6 +246,67 @@ class Solve3D(argschema.ArgSchemaParser):
             np.linalg.norm(self.residuals, axis=1).mean()))
 
         self.output(self.transform.to_dict(), indent=2)
+
+class StagedSolve2PEM():
+    def __init__(self, args):
+        self.reg = args['reg']
+        self.npts = args['npts']
+        self.leave_out_index = args['leave_out_index']
+        self.run()
+
+    def run(self):
+        # solve just with polynomial
+        args_poly = copy.deepcopy(example2)
+        args_poly['model'] = 'POLY'
+        args_poly['leave_out_index'] = self.leave_out_index
+        s_poly = Solve3D(input_data=args_poly, args=[])
+        s_poly.run()
+        tf_poly = s_poly.transform
+        # write the transformed result to file
+        # for input to the next stage
+        tmp_path = '/src/em2p_coreg/python/em2p_coreg/outputs/poly_results.csv'
+        write_src_dst_to_file(
+                tmp_path,
+                tf_poly.transform(s_poly.data['src']),
+                s_poly.data['dst'])
+        
+        # solve with thin plate spline on top
+        args_tps = copy.deepcopy(example2)
+        args_tps['model'] = 'TPS'
+        args_tps['npts'] = self.npts
+        args_tps['data'] = {
+                'landmark_file': tmp_path,
+                'header': ['polyx', 'polyy', 'polyz', 'emx', 'emy', 'emz'],
+                'sd_set': {'src': 'poly', 'dst': 'em'}
+                }
+        args_tps['regularization']['other'] = self.reg
+        s_tps = Solve3D(input_data=args_tps, args=[])
+        s_tps.run()
+        tf_tps = s_tps.transform
+        
+        # this object combines the 2 transforms
+        # it converts input em units into the final units
+        # through both transforms
+        self.transform = StagedTransform([tf_poly, tf_tps])
+
+        # let's convince ourselves it works
+        total_tfsrc = self.transform.transform(s_poly.data['src'])
+        self.residuals = s_poly.data['dst'] - total_tfsrc
+        # for 2p -> em this atol means the residuals are within 100nm
+        # on any given axis, which is pretty good...
+        assert np.all(np.isclose(self.residuals, s_tps.residuals, atol=100)) 
+
+        # how far did the control points move for the thin plate part?
+        csrc = tf_tps.control_pts
+        cdst = tf_tps.transform(csrc)
+        delta = cdst - csrc
+        self.avdelta = np.linalg.norm(delta, axis=1).mean() * 0.001
+        print('control points moved average of %0.1fum' % (self.avdelta))
+
+        self.leave_out_res = None
+        if self.leave_out_index is not None:
+            self.leave_out_res = np.linalg.norm(
+                    s_poly.left_out['dst'] - self.transform.transform(s_poly.left_out['src']))
 
 
 if __name__ == '__main__':
