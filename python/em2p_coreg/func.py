@@ -265,7 +265,7 @@ def get_fields(chosen_cell, scans, stack_key):
 
     return field_munit_relation_keys
 
-def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='average', cell_stack=None, vessel_stack=None, prob_stack=None, figsize=(10,10), dpi=100, locate_cell=False, share=False, enhance=False, combined=False, \
+def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='average', cell_stack=None, vessel_stack=None, prob_stack=None, ctrl_pts_stack=None, figsize=(10,10), dpi=100, locate_cell=False, share=False, enhance=False, combined=False, \
                 EM_field_clip_bounds=None, cell_field_clip_bounds=None, vess_field_clip_bounds=None, segm_field_clip_bounds=None, stack_field_clip_bounds=None):
     """
     function that takes in a field key, and optional 2P and EM stacks, and returns a plot of the imaging field and slices of the field from the stacks.
@@ -343,6 +343,10 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
     if prob_stack is not None:
         segm_field = sample_grid(prob_stack, recentered_grid).numpy()
         segm_name = 'prob stack'
+    elif ctrl_pts_stack is not None:
+        segm_field = sample_grid(ctrl_pts_stack, recentered_grid).numpy()
+        segm_name = 'ctrl pts'
+        segm_comb_title = 'ctrl points & EM'
     else: 
         segm_field = (stack.FieldSegmentation() & field_key & {'scan_session':field_key['session']}).fetch1('segm_field')
         segm_name = '3-D Segmentation'
@@ -405,7 +409,10 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
         
         axes[0].set_title(f'combined functional & stack')        
         axes[1].set_title(f'combined {enhance_string} \n 2P image')
-        axes[2].set_title('functional and EM overlay')
+        if ctrl_pts_stack is not None:
+            axes[2].set_title(segm_comb_title)
+        else:
+            axes[2].set_title('functional and EM overlay')
         fig.suptitle(f'scan_session: {field_key["session"]}, scan_idx: {field_key["scan_idx"]}, field: {field_key["field"]}, units: $\mu$m \n munit_id: {field_key["munit_id"]}', y=1, fontsize=15)
         fig.set_dpi(dpi)
         
