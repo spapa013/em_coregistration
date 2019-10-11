@@ -176,8 +176,8 @@ def add_segments(provided_link, segments, overwrite=True, color=None):
     return urllib.parse.urlunparse([parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, parsed_url.query, '!'+ urllib.parse.quote(json.dumps(json_data))])
 
 def transfer_annotations(source_link, target_link, ano_name, voxelsize):
-    src_json_data, src_parsed_url = utils.html_to_json(source_link, return_parsed_url=True)
-    trg_json_data, trg_parsed_url = utils.html_to_json(target_link, return_parsed_url=True)
+    src_json_data, src_parsed_url = html_to_json(source_link, return_parsed_url=True)
+    trg_json_data, trg_parsed_url = html_to_json(target_link, return_parsed_url=True)
     
     # check if annotation layer exists in source link
     if re.search(ano_name,json.dumps(src_json_data)) is None:
