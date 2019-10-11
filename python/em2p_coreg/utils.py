@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from IPython.display import HTML
+from matplotlib import animation
 from mpl_toolkits.mplot3d import axes3d, Axes3D
 import torch
 from torch.nn import functional as F
@@ -151,6 +153,28 @@ def add_point_annotations(provided_link, ano_name, ano_list, voxelsize, overwrit
 
     return urllib.parse.urlunparse([parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, parsed_url.query, '!'+ urllib.parse.quote(json.dumps(json_data))])
 
+def add_segments(provided_link, segments, overwrite=True, color=None):
+    json_data, parsed_url = html_to_json(provided_link, return_parsed_url=True)
+    seg_strings = []
+    for seg in segments:
+        seg_strings.append(seg.astype(np.str))
+    segmentation_layer = list(filter(lambda _: _['type'] == 'segmentation', json_data['layers']))
+    if re.search('segments',json.dumps(json_data)) is None:
+        segmentation_layer[0].update({'segments':[]})
+    if overwrite:
+        segmentation_layer[0]['segments'] = seg_strings
+    else:
+        segmentation_layer[0]['segments'].extend(seg_strings)
+    if color is not None:
+        if re.search('segmentColors',json.dumps(json_data)) is None:
+            segmentation_layer[0].update({'segmentColors':{}})
+        color_dict = {}
+        for seg in segments:
+            color_dict.update({str(seg):color})
+        segmentation_layer[0]['segmentColors'] = color_dict
+            
+    return urllib.parse.urlunparse([parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, parsed_url.query, '!'+ urllib.parse.quote(json.dumps(json_data))])
+
 def coordinate(grid_to_transform):
     x = grid_to_transform.shape[0]
     y = grid_to_transform.shape[1]
@@ -190,8 +214,46 @@ def sharpen_2pimage(image, laplace_sigma=0.7, low_percentile=3, high_percentile=
     norm = (clipped - clipped.mean()) / (clipped.max() - clipped.min() + 1e-7)
     return norm
 
-def normalize(data, clip_bounds=None, scale=1, astype=np.float):
-    assert type(data)==type(np.array(1))
+def normalize(image, clip_bounds=None, newrange=[0,255], astype=np.uint8):
+    assert type(image)==type(np.array(1))
     if clip_bounds is not None:
-        data = np.clip(data,clip_bounds[0], clip_bounds[1]) 
-    return (scale*((data - data.min()) / data.ptp())).astype(astype)
+        image = np.clip(image,clip_bounds[0], clip_bounds[1]) 
+    return (((image - image.min())*(newrange[1]-newrange[0])/(image.max() - image.min())) + newrange[0]).astype(astype)
+
+def fix_boundaries(image):
+    image = np.maximum(0,image - np.quantile(image,0.05))
+    image = np.minimum(1, image / np.quantile(image,0.995))
+    return image
+
+def fetch_as_list_dict(dj_relation, attrs, keys_to_append=None):
+    out = {}
+    for i, entry in enumerate(np.stack(dj_relation.fetch(*attrs)).T):
+        out.update({i:{attr:val for attr, val in zip(attrs, entry)}})
+    if keys_to_append is not None:
+        for key in keys_to_append:
+            for i in range(len(out)):
+                out[i].update(key)
+    list_dict = []
+    for item in out.items():
+        list_dict.append(item[1])
+    return list_dict
+
+def animate_frames(frames, display_inches=4.0, vmin=0.0, vmax=1200.0, fps=10.0):
+    """
+    creator: Eric Wang
+    Create an HTML5 video from raw video frames
+    Args:
+        frames: np.array of shape [frames, height, width]
+        fps: int
+        display_inches: float
+    Return:
+        HTML5 video
+    """
+    _, height, width = frames.shape
+    interval = 1 / fps * 1000
+    fig, ax = plt.subplots(1, 1, figsize=(display_inches * width / height, display_inches))
+    ims = [[ax.imshow(im, animated=True, vmin=vmin, vmax=vmax)] for im in frames]
+    ani = animation.ArtistAnimation(fig, ims, interval=interval)
+    plt.tight_layout()
+    plt.close(fig)
+    return HTML(ani.to_html5_video())

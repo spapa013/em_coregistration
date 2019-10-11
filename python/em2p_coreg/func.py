@@ -1,4 +1,5 @@
 import datajoint as dj
+import warnings
 from .utils import *
 
 plat = dj.create_virtual_module('pipeline_platinum','pipeline_platinum')
@@ -265,7 +266,7 @@ def get_fields(chosen_cell, scans, stack_key):
 
     return field_munit_relation_keys
 
-def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='average', cell_stack=None, vessel_stack=None, prob_stack=None, ctrl_pts_stack=None, figsize=(10,10), dpi=100, locate_cell=False, share=False, enhance=False, combined=False, \
+def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='average', cell_stack=None, vessel_stack=None, prob_stack=None, ctrl_pts_stack=None, figsize=(10,10), dpi=100, locate_cell=False, share=False, enhance=False, combine=False, \
                 EM_field_clip_bounds=None, cell_field_clip_bounds=None, vess_field_clip_bounds=None, segm_field_clip_bounds=None, stack_field_clip_bounds=None):
     """
     function that takes in a field key, and optional 2P and EM stacks, and returns a plot of the imaging field and slices of the field from the stacks.
@@ -331,7 +332,7 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
     recentered_grid = grid - np.array([stack_x, stack_y, stack_z]) # move center of stack to be (0, 0, 0)
     if cell_stack is not None:
         stack_field = sample_grid(cell_stack, recentered_grid).numpy()
-        stack_name = 'the provided stack'
+        stack_name = 'the enhanced stack'
     else:
         stack_field = (stack.Registration.Affine() & field_key & {'scan_session':field_key['session']}).fetch1('reg_field')
         stack_name = 'Registration.Affine() stack'
@@ -353,9 +354,9 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
     ## EM Image
     temp_grid = (EM_grid - EM_center)/ 1000
     EM_field = sample_grid(EM_data, temp_grid).numpy()
-    EM_image = normalize(EM_field,clip_bounds=EM_field_clip_bounds,scale=255, astype=np.float) #brighten EM image
+    EM_image = normalize(EM_field,clip_bounds=EM_field_clip_bounds, astype=np.float) #brighten EM image
 
-    if not combined:
+    if not combine:
         if share:
             fig, axes = plt.subplots(1, 5, figsize=figsize, sharex=True, sharey=True)
         else:
@@ -372,9 +373,13 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
 
         axes[0].set_title(f'Scan field: {enhance_string} \n {functional_image}')
         axes[1].set_title(f'Field taken from \n {stack_name}')
-        axes[2].set_title(f'Field taken from \n vessels')
+        axes[2].set_title(f'Field taken from \n vessel stack')
         axes[3].set_title(f'Field taken from \n {segm_name}')
-        axes[4].set_title('Field taken from \n resized EM')
+        axes[4].set_title('Field taken from EM')
+        axes[0].set_ylabel('y-axis ($\mu$m)')
+        
+        for ax in axes:
+            ax.set_xlabel('x-axis ($\mu$m)')
 
         fig.suptitle(f'scan_session: {field_key["session"]}, scan_idx: {field_key["scan_idx"]}, field: {field_key["field"]}, units: $\mu$m \n munit_id: {field_key["munit_id"]}', y=1, fontsize=18)
         fig.set_dpi(dpi)
@@ -385,16 +390,17 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
         else:
             fig, axes = plt.subplots(1,3, figsize=figsize)
         # generate functional, stack correlation image
-        combined_correlation_image = np.stack([normalize(cell_field, scale=255, clip_bounds=cell_field_clip_bounds, astype=np.uint8), \
-                                               normalize(stack_field, scale=255, clip_bounds=stack_field_clip_bounds, astype=np.uint8), \
-                                               np.zeros_like(segm_field).astype(np.uint8)],-1)
+        unenhanced_cell_field = resize((meso.SummaryImages.Average() & field_key).fetch1("average_image"), (meso.ScanInfo.Field() & field_key).fetch1('um_height', 'um_width'), desired_res=1)
+        unenhanced_stack_field = (stack.Registration.Affine() & field_key & {'scan_session':field_key['session']}).fetch1('reg_field')
+        corr = (stack.Registration.Affine & field_key & {'scan_session':field_key['session']}).fetch1('score')
+        combined_correlation_image = np.stack([(normalize(fix_boundaries(normalize(-unenhanced_cell_field)))).astype(np.uint8), (normalize(fix_boundaries(normalize(-unenhanced_stack_field)))).astype(np.uint8), (np.zeros_like(unenhanced_cell_field)).astype(np.uint8)],-1)
         # generate overlays for combined EM image
-        vess_overlay = np.stack([np.ones_like(vess_field), np.zeros_like(vess_field), np.zeros_like(vess_field), normalize(vess_field, clip_bounds=vess_field_clip_bounds, astype=np.float)],-1)
-        segm_overlay = np.stack([np.zeros_like(segm_field), np.zeros_like(segm_field), np.ones_like(segm_field), normalize(segm_field, clip_bounds=segm_field_clip_bounds, astype=np.float)],-1)
+        vess_overlay = np.stack([np.ones_like(vess_field), np.zeros_like(vess_field), np.zeros_like(vess_field), normalize(vess_field, clip_bounds=vess_field_clip_bounds, newrange=[0,1], astype=np.float)],-1)
+        segm_overlay = np.stack([np.zeros_like(segm_field), np.zeros_like(segm_field), np.ones_like(segm_field), normalize(segm_field, clip_bounds=segm_field_clip_bounds, newrange=[0,1], astype=np.float)],-1)
         # generate combined 2P image
-        combined_2P_image = np.stack([normalize(vess_field, scale=255, clip_bounds=vess_field_clip_bounds, astype=np.uint8), \
-                                      normalize(cell_field, scale=255, clip_bounds=cell_field_clip_bounds, astype=np.uint8), \
-                                      normalize(segm_field, scale=255, clip_bounds=segm_field_clip_bounds, astype=np.uint8)],-1)        
+        combined_2P_image = np.stack([normalize(vess_field, clip_bounds=vess_field_clip_bounds), \
+                                      normalize(cell_field, clip_bounds=cell_field_clip_bounds), \
+                                      normalize(segm_field, clip_bounds=segm_field_clip_bounds)],-1)        
         
         # plot 
         axes[0].imshow(combined_correlation_image)    
@@ -407,13 +413,92 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
             for ax in axes:
                 ax.imshow((distance_mask<20) & (distance_mask>15), cmap='gray', alpha=0.2)
         
-        axes[0].set_title(f'combined functional & stack')        
+        axes[0].set_title(f'combined inverted \n functional & stack \n corr: {corr:.2f}')        
         axes[1].set_title(f'combined {enhance_string} \n 2P image')
         if ctrl_pts_stack is not None:
             axes[2].set_title(segm_comb_title)
         else:
-            axes[2].set_title('functional and EM overlay')
+            axes[2].set_title('combined \n functional & EM')
+        axes[1].set_ylabel('y-axis ($\mu$m)')        
+        for ax in axes:
+            ax.set_xlabel('x-axis ($\mu$m)')
         fig.suptitle(f'scan_session: {field_key["session"]}, scan_idx: {field_key["scan_idx"]}, field: {field_key["field"]}, units: $\mu$m \n munit_id: {field_key["munit_id"]}', y=1, fontsize=15)
         fig.set_dpi(dpi)
-        
 
+def get_munit_stats(munit_id_ld, stack_key, scan_relation=None):
+    unit_info = fetch_as_list_dict((stack.StackSet.Match & stack_key) & munit_id_ld, ['animal_id', 'scan_session', 'scan_idx', 'unit_id'], [{'segmentation_method':6}])
+
+    for entry in unit_info:
+        entry.update({'session':entry['scan_session']})
+
+    if scan_relation is not None:
+        munits_original = (stack.StackSet.Match() * stack.StackSet.Unit() * (stack.CorrectedStack & stack_key)) & scan_relation.proj(scan_session = 'session')
+    else:
+        munits_original = (stack.StackSet.Match() * stack.StackSet.Unit() * (stack.CorrectedStack & stack_key))
+
+    munits_location = munits_original.proj(np_x = 'munit_x - x + um_width/2', np_y = 'munit_y - y + um_height/2', np_z = 'munit_z - z + um_depth/2')
+
+    munit_oracle = tune.MovieOracle.Total & unit_info
+    if len(munit_oracle) == 0:
+        return print('Oracle table is empty')
+    munit_coords = munits_location & munit_id_ld
+    munit_brain_area = anatomy.AreaMembership & unit_info
+    if len(munit_oracle) == 0:
+        return print('Brain area table is empty')
+    munit_rad = radtune.VonFit.Unit & 'vonfit_method = 3' & 'ori_type = "dir"' & unit_info
+    munit_spat = spattune.STA.Loc() & 'stimgroup_id = 1' & 'center_x BETWEEN 5 AND 155 and center_y BETWEEN 5 AND 85' & unit_info #can rework this to allow other stimgroups later 
+
+    df_oracle = pd.DataFrame(munit_oracle).rename(columns={'session':'scan_session'})
+    df_coords = pd.DataFrame(munit_coords)
+    df_brain_area = pd.DataFrame(munit_brain_area).rename(columns={'session':'scan_session'})
+    df_rad = pd.DataFrame(munit_rad).rename(columns={"amps":"rad_amps", 'session':'scan_session'})
+    df_spat = pd.DataFrame(munit_spat).rename(columns={"amp":"spat_amp", 'session':'scan_session'})
+
+    df_list = [df_oracle, df_coords, df_brain_area, df_rad, df_spat]
+
+    for df in df_list:
+        if len(df)>0:
+            df['pd_id'] = df['scan_session']*df['scan_idx']*df['unit_id']
+            df.sort_values('pd_id', ascending=True)
+
+    col_list = ['munit_id','np_x', 'np_y', 'np_z', 'brain_area', 'pref_theta', 'von_p_value', 'snr']
+    df_compiled = pd.DataFrame(df_oracle, columns=df_oracle.columns.tolist()+col_list)
+
+    col_df_map = {'munit_id':df_coords, 'np_x':df_coords, 'np_y':df_coords, 'np_z':df_coords, 'brain_area':df_brain_area, 'pref_theta':df_rad, 'von_p_value':df_rad, 'snr':df_spat}
+    df_final = df_compiled
+    for col in col_list:
+        df = col_df_map[col]
+        if len(df)>0:
+            for pd_id in df['pd_id'].values:
+                to_index = df_final[df_final['pd_id']==pd_id].index
+                from_index = df[df['pd_id']==pd_id].index
+                df_final.loc[to_index[0],col] = df.loc[from_index[0],col]
+    return df_final
+
+def get_munit_STAs(munit_id_ld, stack_key, scan_relation=None, stimgroup_restriction=None, plot=True):
+    unit_info = fetch_as_list_dict((stack.StackSet.Match & stack_key) & munit_id_ld, ['animal_id', 'scan_session', 'scan_idx', 'unit_id'], [{'segmentation_method':6}])
+    
+    for unit in unit_info:
+        unit.update({'session':unit['scan_session']})
+    
+    if scan_relation is not None:
+        STA_source = spattune.STA.Map()*spattune.STA.Loc() & 'center_x BETWEEN 5 AND 155 and center_y BETWEEN 5 AND 85' &  unit_info & scan_relation
+    else:
+        STA_source = spattune.STA.Map()*spattune.STA.Loc() & 'center_x BETWEEN 5 AND 155 and center_y BETWEEN 5 AND 85' & unit_info
+    
+    if stimgroup_restriction is not None:
+        STA_source = STA_source & stimgroup_restriction
+
+    if plot:
+        sessions, scan_idxs, stimgroup_ids, snrs, STAs = STA_source.fetch('session', 'scan_idx', 'stimgroup_id', 'snr', 'map')
+        for session, scan_idx, stimgroup_id, snr, STA, in zip(sessions, scan_idxs, stimgroup_ids, snrs, STAs):
+            fig, ax = plt.subplots()
+            ax.imshow(STA, cmap='gray')
+            ax.set_title(f'munit_id:{munit_id_ld["munit_id"]}, session:{session},scan_idx:{scan_idx}, stimgroup_id:{stimgroup_id}, snr:{snr:.3f}')
+    
+    return STA_source
+
+    
+
+    
+    
