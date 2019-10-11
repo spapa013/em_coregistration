@@ -1,5 +1,5 @@
 # FROM ninai/stimulus-pipeline # Will only work if you have access, want to be independent from this and all of its tables though. Meaning copy what we need to our schemas.
-FROM ninai/pipeline:base
+FROM ninai/stimulus-pipeline
 LABEL maintainer="Christos & Stelios Papadopoulos, et al."
 
 RUN apt-get -y update && \
@@ -24,7 +24,9 @@ RUN apt-get -y install libassimp-dev
 RUN pip3 install ipyvolume jupyterlab statsmodels pycircstat nose autograd torch
 RUN pip3 install seaborn --upgrade
 RUN pip3 install jgraph
-RUN pip3 install marshmallow==2.19.5
+RUN pip3 install marshmallow==2.20.1
+RUN pip3 install argschema==1.17.5
+
 
 ADD . /src/em2p_coreg
 RUN pip3 install -e /src/em2p_coreg/python
