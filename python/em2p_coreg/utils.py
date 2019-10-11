@@ -129,8 +129,7 @@ def add_point_annotations(provided_link, ano_name, ano_list, voxelsize, overwrit
     if ano_list.ndim>2:
         return print('The annotation list must be 1D or 2D')
     for i, ano in enumerate(ano_list):
-        # ano_list_dict.append({'point':ano.tolist(), 'type':'point', 'id':str(i+1), "tagIds":[]})
-        ano_list_dict.append(OrderedDict(point=ano.tolist(), type='point', id=str(i+1), tagIds=[]))
+        ano_list_dict.append({'point':ano.tolist(), 'type':'point', 'id':str(i+1), "tagIds":[]})
 
     json_data, parsed_url = html_to_json(provided_link, return_parsed_url=True)
     # if annotation layer doesn't exist, create it
