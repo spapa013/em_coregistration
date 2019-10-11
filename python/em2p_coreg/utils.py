@@ -121,6 +121,7 @@ def html_to_json(url_string, return_parsed_url=False, fragment_prefix='!'):
         return json_state_dict
 
 def add_point_annotations(provided_link, ano_name, ano_list, voxelsize, overwrite=True):
+    from collections import OrderedDict
     # format annotation list
     ano_list_dict = []
     if ano_list.ndim<2:
@@ -128,7 +129,8 @@ def add_point_annotations(provided_link, ano_name, ano_list, voxelsize, overwrit
     if ano_list.ndim>2:
         return print('The annotation list must be 1D or 2D')
     for i, ano in enumerate(ano_list):
-        ano_list_dict.append({'point':ano.tolist(), 'type':'point', 'id':str(i+1), "tagIds":[]})
+        # ano_list_dict.append({'point':ano.tolist(), 'type':'point', 'id':str(i+1), "tagIds":[]})
+        ano_list_dict.append(OrderedDict(point=ano.tolist(), type='point', id=str(i+1), tagIds=[]))
 
     json_data, parsed_url = html_to_json(provided_link, return_parsed_url=True)
     # if annotation layer doesn't exist, create it
