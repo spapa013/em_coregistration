@@ -175,6 +175,32 @@ def add_segments(provided_link, segments, overwrite=True, color=None):
             
     return urllib.parse.urlunparse([parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, parsed_url.query, '!'+ urllib.parse.quote(json.dumps(json_data))])
 
+def transfer_annotations(source_link, target_link, ano_name, voxelsize):
+    src_json_data, src_parsed_url = utils.html_to_json(source_link, return_parsed_url=True)
+    trg_json_data, trg_parsed_url = utils.html_to_json(target_link, return_parsed_url=True)
+    
+    # check if annotation layer exists in source link
+    if re.search(ano_name,json.dumps(src_json_data)) is None:
+        return print('annotation layer does not exist')
+    # get annotation to transfer
+    src_annotation_dict = list(filter(lambda _: _['name'] == ano_name, src_json_data['layers']))
+    src_annotation_ind = np.where(np.array(src_json_data['layers']) == src_annotation_dict)[0][0].squeeze()
+    # test if voxel size of annotation matches provided voxel size
+    if src_json_data['layers'][src_annotation_ind]['voxelSize']!=voxelsize:
+        return print('The annotation layer already exists but does not match your provided voxelsize')
+    # check if annotation exists in target, if it doesn't then create it
+    if re.search(ano_name,json.dumps(trg_json_data)) is None:
+        trg_json_data['layers'].append({'name': ano_name})
+    
+    # find annotation in target
+    trg_annotation_dict = list(filter(lambda _: _['name'] == ano_name, trg_json_data['layers']))
+    trg_annotation_ind = np.where(np.array(trg_json_data['layers']) == trg_annotation_dict)[0][0].squeeze()
+    
+    # transfer annotations
+    trg_json_data['layers'][trg_annotation_ind] = src_json_data['layers'][src_annotation_ind]
+
+    return urllib.parse.urlunparse([trg_parsed_url.scheme, trg_parsed_url.netloc, trg_parsed_url.path, trg_parsed_url.params, trg_parsed_url.query, '!'+ urllib.parse.quote(json.dumps(trg_json_data))])
+
 def coordinate(grid_to_transform):
     x = grid_to_transform.shape[0]
     y = grid_to_transform.shape[1]
