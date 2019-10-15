@@ -7,9 +7,10 @@ meso = dj.create_virtual_module('pipeline_meso', 'pipeline_meso')
 reso = dj.create_virtual_module('pipeline_reso', 'pipeline_reso')
 tune = dj.create_virtual_module('pipeline_tune', 'pipeline_tune')
 stack = dj.create_virtual_module('pipeline_stack', 'pipeline_stack')
-anatomy = dj.create_virtual_module('pipeline_anatomy', 'pipeline_anatomy')
-radtune = dj.create_virtual_module('pipeline_radtune','pipeline_radtune')
 spattune = dj.create_virtual_module('pipeline_spattune','pipeline_spattune')
+anatomy = dj.create_virtual_module('pipeline_anatomy', 'pipeline_anatomy')
+
+from stimline import radtune
 
 def get_munit_ids(scan_relation, stack_key, brain_area, tuning=None, oracle_threshold=0.2, von_p_threshold=0.05, \
                   snr_threshold=1.3, n_scan_threshold=1, limit=10, xmin=None, xmax=None, ymin=None, ymax=None, zmin=None, zmax=None, return_format=None):
@@ -413,7 +414,7 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
             for ax in axes:
                 ax.imshow((distance_mask<20) & (distance_mask>15), cmap='gray', alpha=0.2)
         
-        axes[0].set_title(f'combined inverted \n functional & stack \n corr: {corr:.2f}')        
+        axes[0].set_title(f'combined \n functional & stack \n corr: {corr:.2f}')        
         axes[1].set_title(f'combined {enhance_string} \n 2P image')
         if ctrl_pts_stack is not None:
             axes[2].set_title(segm_comb_title)
@@ -424,6 +425,9 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
             ax.set_xlabel('x-axis ($\mu$m)')
         fig.suptitle(f'scan_session: {field_key["session"]}, scan_idx: {field_key["scan_idx"]}, field: {field_key["field"]}, units: $\mu$m \n munit_id: {field_key["munit_id"]}', y=1, fontsize=15)
         fig.set_dpi(dpi)
+
+def get_unit_info(munit_id_ld, scan_relation, stack_key):
+    return (stack.StackSet.Match & stack_key) & scan_relation.proj(scan_session='session') & munit_id_ld
 
 def get_munit_stats(munit_id_ld, stack_key, scan_relation=None):
     unit_info = fetch_as_list_dict((stack.StackSet.Match & stack_key) & munit_id_ld, ['animal_id', 'scan_session', 'scan_idx', 'unit_id'], [{'segmentation_method':6}])
@@ -475,7 +479,7 @@ def get_munit_stats(munit_id_ld, stack_key, scan_relation=None):
                 df_final.loc[to_index[0],col] = df.loc[from_index[0],col]
     return df_final
 
-def get_munit_STAs(munit_id_ld, stack_key, scan_relation=None, stimgroup_restriction=None, plot=True):
+def get_munit_STAs(munit_id_ld, stack_key, scan_relation=None, stimgroup_restriction=None, plot=True, dpi=100, title=None, **kwargs):
     unit_info = fetch_as_list_dict((stack.StackSet.Match & stack_key) & munit_id_ld, ['animal_id', 'scan_session', 'scan_idx', 'unit_id'], [{'segmentation_method':6}])
     
     for unit in unit_info:
@@ -494,11 +498,70 @@ def get_munit_STAs(munit_id_ld, stack_key, scan_relation=None, stimgroup_restric
         for session, scan_idx, stimgroup_id, snr, STA, in zip(sessions, scan_idxs, stimgroup_ids, snrs, STAs):
             fig, ax = plt.subplots()
             ax.imshow(STA, cmap='gray')
-            ax.set_title(f'munit_id:{munit_id_ld["munit_id"]}, session:{session},scan_idx:{scan_idx}, stimgroup_id:{stimgroup_id}, snr:{snr:.3f}')
+            if title is None:
+                title=f'munit_id:{munit_id_ld["munit_id"]}, session:{session},scan_idx:{scan_idx}, stimgroup_id:{stimgroup_id}, snr:{snr:.3f}'
+            ax.set_title(title)
+            ax.axis('off')
+            fig.set_dpi(dpi)
     
     return STA_source
 
     
+def field_to_EM_grid(field_key, transformation_object, stack_key):
+    grid = get_grid(stack.Registration() & field_key & {'scan_session':field_key['session']}, desired_res=1)
+    # convert grid from motor coordinates to numpy coordinates
+    center_xyz_um = np.array([*(stack.CorrectedStack() & stack_key).fetch1('x', 'y', 'z')])
+    lengths_xyz_um = np.array([*(stack.CorrectedStack() & stack_key).fetch1('um_width', 'um_height', 'um_depth')])
+    np_grid = grid - np.array(center_xyz_um) + np.array(lengths_xyz_um) / 2
+    transformed_coordinates = transformation_object.transform.transform(coordinate(np_grid)/1000)
+    return uncoordinate(transformed_coordinates,*np_grid.shape[:2])   
+    
+def get_tuning_curves(munit_id_ld, scan_relation, stack_key, figsize=np.array((4,3)), fs = 10, lw = 1, ms = 10, dpi=100, title=None, **kwargs):
+    """from Paul Fahey""" 
+    rad_info = radtune.VonFit.Unit & 'vonfit_method=3' & 'ori_type = "dir"' & get_unit_info(munit_id_ld, scan_relation, stack_key).proj(session='scan_session')
+    von_keys = rad_info.fetch('KEY')
+    
+    for von_key in von_keys:
+        _,trace_stack,dirs = radtune.RadTempFit._stack_traces(von_key)
+        trace_stack,dirs = trace_stack[0],dirs[0]
+        dirs = clock2math(dirs)
+        trace_means = np.nanmean(trace_stack,axis=1)
+        dir_set = sorted(list(set(dirs)))
+        dir_means = [np.nanmean(trace_means[dirs==d]) for d in dir_set]
+        
+        
+        fig,ax = plt.subplots(figsize=figsize,facecolor='none')
+        ax.set_aspect('auto')
+        ax.set_facecolor('none')
+        ax.plot(dirs,trace_means,'ok',markersize=ms/2,markerfacecolor='None',
+                markeredgecolor=[0,0,0,0.4],markeredgewidth=.5)
+        ax.plot([2*np.pi]*np.sum(dirs==dir_set[0]),trace_means[dirs==dir_set[0]],
+                'ok',markersize=ms/2,markerfacecolor='None',markeredgecolor=[0,0,0,0.4],markeredgewidth=.5)
+        ax.plot(dir_set,dir_means,'.r',markersize=ms)
+        ax.plot(2*np.pi,dir_means[0],'.r',markersize=ms)
 
-    
-    
+        fetch_str = ['base','thetas','amps','sharps']
+        b,t,a,s = (radtune.VonFit.Unit & von_key).fetch1(*fetch_str)
+        t = clock2math(t)
+        plot_dirs = np.linspace(0,2*np.pi,101)
+        ax.plot(plot_dirs,radtune.VonFit._von_mises(b,t,a,s,plot_dirs),'r',linewidth = lw)
+        ax.set_yticks([])
+        ax.set_xticks([0, np.pi/2, np.pi, 3*np.pi/2, 2*np.pi])
+        ax.set_xticklabels(['0', '\u03C0/2', '\u03C0', '3\u03C0/2', '2\u03C0'])
+        if title is None:
+            title = f'munit_id:{munit_id_ld["munit_id"]}, session:{von_key["session"]}, scan_idx:{von_key["scan_idx"]}'
+        ax.set_title(title)
+        plt.xticks(fontsize=fs)
+        fig.set_dpi(dpi)
+
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+
+        # title = ('_'.join([str(v) for v in (meso.ScanSet.Unit & von_key).fetch1('KEY').values()]) + '_von_polar_no_out_no_rest.svg')
+        # bbox = Bbox([[-0.5,-0.5],list(figsize+0.5)])
+        # plt.savefig(path+title, dpi=600,bbox_inches=bbox,facecolor='none')
+
+        plt.show()
+        plt.close()
+
+    return rad_info

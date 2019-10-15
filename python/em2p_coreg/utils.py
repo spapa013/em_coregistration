@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+# from matplotlib.transforms import Bbox
 from IPython.display import HTML
 from matplotlib import animation
 from mpl_toolkits.mplot3d import axes3d, Axes3D
@@ -11,6 +12,10 @@ from PIL import Image
 import json
 import urllib
 from scipy import ndimage
+
+def clock2math(t): 
+    """from Paul Fahey""" 
+    return ((np.pi / 2) - t) % (2 * np.pi)
 
 def create_grid(um_sizes, desired_res=1):
     """ Create a grid corresponding to the sample position of each pixel/voxel in a FOV of
@@ -127,8 +132,8 @@ def add_point_annotations(provided_link, ano_name, ano_list, voxelsize, overwrit
         ano_list = np.expand_dims(ano_list,0)
     if ano_list.ndim>2:
         return print('The annotation list must be 1D or 2D')
-    for i, ano in enumerate(ano_list):
-        ano_list_dict.append({'point':ano.tolist(), 'type':'point', 'id':str(i+1), "tagIds":[]})
+    for i, ano in enumerate(ano_list.tolist()):
+        ano_list_dict.append({'point':ano, 'type':'point', 'id':str(i+1), "tagIds":[]})
 
     json_data, parsed_url = html_to_json(provided_link, return_parsed_url=True)
     # if annotation layer doesn't exist, create it
@@ -140,7 +145,7 @@ def add_point_annotations(provided_link, ano_name, ano_list, voxelsize, overwrit
                                'voxelSize': voxelsize,
                                'name': ano_name})
         print('annotation layer does not exist... creating it')
-    annotation_dict = list(filter(lambda _: _['name'] == ano_name, json_data['layers']))
+    annotation_dict = list(filter(lambda d: d['name'] == ano_name, json_data['layers']))
     annotation_ind = np.where(np.array(json_data['layers']) == annotation_dict)[0][0].squeeze()
     # test if voxel size of annotation matches provided voxel size
     if json_data['layers'][annotation_ind]['voxelSize']!=voxelsize:
@@ -158,7 +163,7 @@ def add_segments(provided_link, segments, overwrite=True, color=None):
     seg_strings = []
     for seg in segments:
         seg_strings.append(seg.astype(np.str))
-    segmentation_layer = list(filter(lambda _: _['type'] == 'segmentation', json_data['layers']))
+    segmentation_layer = list(filter(lambda d: d['type'] == 'segmentation', json_data['layers']))
     if re.search('segments',json.dumps(json_data)) is None:
         segmentation_layer[0].update({'segments':[]})
     if overwrite:
@@ -183,7 +188,7 @@ def transfer_annotations(source_link, target_link, ano_name, voxelsize):
     if re.search(ano_name,json.dumps(src_json_data)) is None:
         return print('annotation layer does not exist')
     # get annotation to transfer
-    src_annotation_dict = list(filter(lambda _: _['name'] == ano_name, src_json_data['layers']))
+    src_annotation_dict = list(filter(lambda d: d['name'] == ano_name, src_json_data['layers']))
     src_annotation_ind = np.where(np.array(src_json_data['layers']) == src_annotation_dict)[0][0].squeeze()
     # test if voxel size of annotation matches provided voxel size
     if src_json_data['layers'][src_annotation_ind]['voxelSize']!=voxelsize:
@@ -193,7 +198,7 @@ def transfer_annotations(source_link, target_link, ano_name, voxelsize):
         trg_json_data['layers'].append({'name': ano_name})
     
     # find annotation in target
-    trg_annotation_dict = list(filter(lambda _: _['name'] == ano_name, trg_json_data['layers']))
+    trg_annotation_dict = list(filter(lambda d: d['name'] == ano_name, trg_json_data['layers']))
     trg_annotation_ind = np.where(np.array(trg_json_data['layers']) == trg_annotation_dict)[0][0].squeeze()
     
     # transfer annotations
@@ -254,7 +259,10 @@ def fix_boundaries(image):
 def fetch_as_list_dict(dj_relation, attrs, keys_to_append=None):
     out = {}
     for i, entry in enumerate(np.stack(dj_relation.fetch(*attrs)).T):
-        out.update({i:{attr:val for attr, val in zip(attrs, entry)}})
+        if len(attrs)>1:
+            out.update({i:{attr:val for attr, val in zip(attrs, entry)}})
+        else:
+            out.update({i:{attrs[0]:entry}})
     if keys_to_append is not None:
         for key in keys_to_append:
             for i in range(len(out)):
