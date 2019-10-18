@@ -10,7 +10,6 @@ stack = dj.create_virtual_module('pipeline_stack', 'pipeline_stack')
 spattune = dj.create_virtual_module('pipeline_spattune','pipeline_spattune')
 anatomy = dj.create_virtual_module('pipeline_anatomy', 'pipeline_anatomy')
 
-from stimline import radtune
 
 def get_munit_ids(scan_relation, stack_key, brain_area, tuning=None, oracle_threshold=0.2, von_p_threshold=0.05, \
                   snr_threshold=1.3, n_scan_threshold=1, limit=10, xmin=None, xmax=None, ymin=None, ymax=None, zmin=None, zmax=None, return_format=None):
@@ -427,7 +426,7 @@ def plot_fields(field_key, EM_grid, EM_center, EM_data=None, functional_image='a
         fig.set_dpi(dpi)
 
 def get_unit_info(munit_id_ld, scan_relation, stack_key):
-    return (stack.StackSet.Match & stack_key) & scan_relation.proj(scan_session='session') & munit_id_ld
+    return (stack.StackSet.Match & stack_key) & scan_relation.proj(scan_session='session').proj() & munit_id_ld
 
 def get_munit_stats(munit_id_ld, stack_key, scan_relation=None):
     unit_info = fetch_as_list_dict((stack.StackSet.Match & stack_key) & munit_id_ld, ['animal_id', 'scan_session', 'scan_idx', 'unit_id'], [{'segmentation_method':6}])
@@ -479,28 +478,40 @@ def get_munit_stats(munit_id_ld, stack_key, scan_relation=None):
                 df_final.loc[to_index[0],col] = df.loc[from_index[0],col]
     return df_final
 
-def get_munit_STAs(munit_id_ld, stack_key, scan_relation=None, stimgroup_restriction=None, plot=True, dpi=100, title=None, **kwargs):
+def get_munit_STAs(munit_id_ld, stack_key, scan_relation=None, stimgroup_restriction=None, plot=False, dpi=100, center_restriction=True, **kwargs):
     unit_info = fetch_as_list_dict((stack.StackSet.Match & stack_key) & munit_id_ld, ['animal_id', 'scan_session', 'scan_idx', 'unit_id'], [{'segmentation_method':6}])
     
     for unit in unit_info:
         unit.update({'session':unit['scan_session']})
+
+    if center_restriction:
     
-    if scan_relation is not None:
-        STA_source = spattune.STA.Map()*spattune.STA.Loc() & 'center_x BETWEEN 5 AND 155 and center_y BETWEEN 5 AND 85' &  unit_info & scan_relation
+        if scan_relation is not None:
+            STA_source = spattune.STA.Map()*spattune.STA.Loc() & 'center_x BETWEEN 5 AND 155 and center_y BETWEEN 5 AND 85' &  unit_info & scan_relation
+        else:
+            STA_source = spattune.STA.Map()*spattune.STA.Loc() & 'center_x BETWEEN 5 AND 155 and center_y BETWEEN 5 AND 85' & unit_info
+        
+        if stimgroup_restriction is not None:
+            STA_source = STA_source & stimgroup_restriction
+    
     else:
-        STA_source = spattune.STA.Map()*spattune.STA.Loc() & 'center_x BETWEEN 5 AND 155 and center_y BETWEEN 5 AND 85' & unit_info
-    
-    if stimgroup_restriction is not None:
-        STA_source = STA_source & stimgroup_restriction
+        
+        if scan_relation is not None:
+            STA_source = spattune.STA.Map()*spattune.STA.Loc() &  unit_info & scan_relation
+        else:
+            STA_source = spattune.STA.Map()*spattune.STA.Loc() & unit_info
+        
+        if stimgroup_restriction is not None:
+            STA_source = STA_source & stimgroup_restriction
 
     if plot:
         sessions, scan_idxs, stimgroup_ids, snrs, STAs = STA_source.fetch('session', 'scan_idx', 'stimgroup_id', 'snr', 'map')
         for session, scan_idx, stimgroup_id, snr, STA, in zip(sessions, scan_idxs, stimgroup_ids, snrs, STAs):
+            bound = np.max(np.abs(STA))
             fig, ax = plt.subplots()
-            ax.imshow(STA, cmap='gray')
-            if title is None:
-                title=f'munit_id:{munit_id_ld["munit_id"]}, session:{session},scan_idx:{scan_idx}, stimgroup_id:{stimgroup_id}, snr:{snr:.3f}'
-            ax.set_title(title)
+            ax.imshow(STA, cmap='gray', vmin=-bound, vmax=bound)
+            
+            ax.set_title(f'munit_id:{munit_id_ld["munit_id"]}, session:{session},scan_idx:{scan_idx}, stimgroup_id:{stimgroup_id}, snr:{snr:.3f}')
             ax.axis('off')
             fig.set_dpi(dpi)
     
@@ -516,7 +527,7 @@ def field_to_EM_grid(field_key, transformation_object, stack_key):
     transformed_coordinates = transformation_object.transform.transform(coordinate(np_grid)/1000)
     return uncoordinate(transformed_coordinates,*np_grid.shape[:2])   
     
-def get_tuning_curves(munit_id_ld, scan_relation, stack_key, figsize=np.array((4,3)), fs = 10, lw = 1, ms = 10, dpi=100, title=None, **kwargs):
+def get_tuning_curves(munit_id_ld, scan_relation, stack_key, figsize=np.array((4,3)), fs = 10, lw = 1, ms = 10, dpi=100, title=None, return_ax=False, ax=None, **kwargs):
     """from Paul Fahey""" 
     rad_info = radtune.VonFit.Unit & 'vonfit_method=3' & 'ori_type = "dir"' & get_unit_info(munit_id_ld, scan_relation, stack_key).proj(session='scan_session')
     von_keys = rad_info.fetch('KEY')
@@ -548,6 +559,9 @@ def get_tuning_curves(munit_id_ld, scan_relation, stack_key, figsize=np.array((4
         ax.set_yticks([])
         ax.set_xticks([0, np.pi/2, np.pi, 3*np.pi/2, 2*np.pi])
         ax.set_xticklabels(['0', '\u03C0/2', '\u03C0', '3\u03C0/2', '2\u03C0'])
+        ax.set_ylabel('Block Mean Activity (AU)')
+        ax.set_xlabel('Direction of Motion')
+
         if title is None:
             title = f'munit_id:{munit_id_ld["munit_id"]}, session:{von_key["session"]}, scan_idx:{von_key["scan_idx"]}'
         ax.set_title(title)
@@ -563,5 +577,8 @@ def get_tuning_curves(munit_id_ld, scan_relation, stack_key, figsize=np.array((4
 
         plt.show()
         plt.close()
-
-    return rad_info
+    if return_ax:
+        ax = ax
+        return ax.plot(plot_dirs,radtune.VonFit._von_mises(b,t,a,s,plot_dirs),'r',linewidth = lw)
+    else:
+        return rad_info
