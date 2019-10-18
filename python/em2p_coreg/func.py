@@ -10,6 +10,7 @@ stack = dj.create_virtual_module('pipeline_stack', 'pipeline_stack')
 spattune = dj.create_virtual_module('pipeline_spattune','pipeline_spattune')
 anatomy = dj.create_virtual_module('pipeline_anatomy', 'pipeline_anatomy')
 
+from stimline import radtune
 
 def get_munit_ids(scan_relation, stack_key, brain_area, tuning=None, oracle_threshold=0.2, von_p_threshold=0.05, \
                   snr_threshold=1.3, n_scan_threshold=1, limit=10, xmin=None, xmax=None, ymin=None, ymax=None, zmin=None, zmax=None, return_format=None):
