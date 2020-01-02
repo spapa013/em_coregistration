@@ -125,15 +125,15 @@ def html_to_json(url_string, return_parsed_url=False, fragment_prefix='!'):
     else:
         return json_state_dict
 
-def add_point_annotations(provided_link, ano_name, ano_list, voxelsize, overwrite=True):
+def add_point_annotations(provided_link, ano_name, ano_list, voxelsize, color='#f1ff00', overwrite=True):
     # format annotation list
     ano_list_dict = []
     if ano_list.ndim<2:
         ano_list = np.expand_dims(ano_list,0)
     if ano_list.ndim>2:
         return print('The annotation list must be 1D or 2D')
-    for i, ano in enumerate(ano_list.tolist()):
-        ano_list_dict.append({'point':ano, 'type':'point', 'id':str(i+1), "tagIds":[]})
+    for i, centroid in enumerate(ano_list.tolist()):
+        ano_list_dict.append({'point':centroid, 'type':'point', 'id':str(i+1), "tagIds":[]})
 
     json_data, parsed_url = html_to_json(provided_link, return_parsed_url=True)
     # if annotation layer doesn't exist, create it
@@ -141,6 +141,7 @@ def add_point_annotations(provided_link, ano_name, ano_list, voxelsize, overwrit
         json_data['layers'].append({'tool': 'annotatePoint',
                                'type': 'annotation',
                                'annotations': [],
+                               'annotationColor': color,
                                'annotationTags': [],
                                'voxelSize': voxelsize,
                                'name': ano_name})
@@ -157,6 +158,42 @@ def add_point_annotations(provided_link, ano_name, ano_list, voxelsize, overwrit
         json_data['layers'][annotation_ind]['annotations'].extend(ano_list_dict)
 
     return urllib.parse.urlunparse([parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, parsed_url.query, '!'+ urllib.parse.quote(json.dumps(json_data))])
+
+def add_ellipsoid_annotations(provided_link, ano_name, ano_list, radii, voxelsize, color='#00ff2c', overwrite=True):
+    # format annotation list
+    ano_list_dict = []
+    if ano_list.ndim<2:
+        ano_list = np.expand_dims(ano_list,0)
+    if ano_list.ndim>2:
+        return print('The annotation list must be 1D or 2D')
+    for i, centroid in enumerate(ano_list.tolist()):
+        ano_list_dict.append({'center':centroid, 'radii':radii, 'type':'ellipsoid', 'id':str(i+1), "tagIds":[]})
+
+    json_data, parsed_url = html_to_json(provided_link, return_parsed_url=True)
+    # if annotation layer doesn't exist, create it
+    if re.search(ano_name,json.dumps(json_data)) is None:
+        json_data['layers'].append({'tool': 'annotateSphere',
+                               'type': 'annotation',
+                               'annotations': [],
+                               'annotationColor': color,
+                               'annotationTags': [],
+                               'voxelSize': voxelsize,
+                               'name': ano_name})
+        print('annotation layer does not exist... creating it')
+    annotation_dict = list(filter(lambda d: d['name'] == ano_name, json_data['layers']))
+    annotation_ind = np.where(np.array(json_data['layers']) == annotation_dict)[0][0].squeeze()
+    # test if voxel size of annotation matches provided voxel size
+    if json_data['layers'][annotation_ind]['voxelSize']!=voxelsize:
+        return print('The annotation layer already exists but does not match your provided voxelsize')
+    # add annotations
+    if overwrite:
+        json_data['layers'][annotation_ind]['annotations'] = ano_list_dict
+    else:
+        json_data['layers'][annotation_ind]['annotations'].extend(ano_list_dict)
+
+    return urllib.parse.urlunparse([parsed_url.scheme, parsed_url.netloc, parsed_url.path, parsed_url.params, parsed_url.query, '!'+ urllib.parse.quote(json.dumps(json_data))])
+
+
 
 def add_segments(provided_link, segments, overwrite=True, color=None):
     json_data, parsed_url = html_to_json(provided_link, return_parsed_url=True)

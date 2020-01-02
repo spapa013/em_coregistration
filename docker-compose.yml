@@ -33,7 +33,7 @@ services:
       context: .
     env_file: .env
     environment:
-      - DISPLAY=$DISPLAY
+      - DISPLAY=$DISPL
       - XSOCK=/tmp/.X11-unix/X0
     ports:
       - "8888:8888"
